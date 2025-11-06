@@ -1,0 +1,30 @@
+I need help troubleshooting my Discord bot built with discord.py. Looking at the bot's workflow logs, it's connected to Discord and processing messages, but I occasionally face issues with command handling or disconnections.
+
+I want you to provide me with:
+
+1. A simple test script to verify my Discord bot token and diagnose connection issues. The script should:
+   - Load the token (either from environment variable, .env file, or cache)
+   - Validate the token format
+   - Connect to Discord and verify the connection works
+   - Report detailed errors if any step fails
+
+2. Common issues that might cause my Discord bot to:
+   - Connect but not properly respond to commands
+   - Disconnect unexpectedly
+   - Fail to process certain types of events
+
+3. Best practices for token management and recovery in Discord bots, including:
+   - How to securely store the token
+   - How to detect when a token becomes invalid
+   - How to implement a robust recovery system
+
+4. Improvements I could make to my error handling to better diagnose issues, such as:
+   - What logs to check
+   - What information to capture
+   - How to implement better automated recovery
+
+My bot already has complex token management in config.py with validation, cleaning, and multiple fallback sources. It also has several recovery mechanisms including auto_401_recovery.py, which detects authentication failures.
+
+Based on the logs, the bot seems operational but I want to ensure it's robust and understand why I might be experiencing intermittent issues.
+
+Please start by providing the test script I can use to verify the basic functionality and token validity.

@@ -1,0 +1,30 @@
+I need help troubleshooting my Discord bot built with discord.py. The bot has an advanced token management and recovery system, but I'm having issues with it. Instead of sharing entire files, I'll share the most relevant code snippets from key files:
+
+From bot.py, share:
+1. The Discord client initialization code 
+2. The on_ready event handler
+3. Any error handling related to Discord connection
+4. How the bot creates and uses the Flask server
+
+From config.py, share:
+1. The token retrieval function (get_token)
+2. The token validation function (validate_token)
+3. Any token caching mechanisms
+
+From auto_401_recovery.py, share:
+1. How it detects authentication failures
+2. The recovery process when it detects a token issue
+
+From keep_running.py, share:
+1. The main monitoring loop
+2. How it checks if the bot is running correctly
+3. The restart mechanism
+
+When sharing these snippets, explain:
+1. What each snippet does
+2. Any issues you notice in the code
+3. Whether there are dependencies between files that might cause problems
+
+I currently have a Discord bot token that appears to be cached in token_cache.json. The bot might connect to Discord but sometimes disconnects or doesn't handle commands properly. I need help understanding what could be causing these issues and how to fix them.
+
+Please provide concise explanations and solutions rather than complete rewrites of the code.

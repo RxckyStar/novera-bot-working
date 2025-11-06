@@ -1,0 +1,108 @@
+{
+  "1350165280940228629": {
+    "name": "Novera",
+    "roles": {
+      "management": [
+        "1350175902738419734"
+      ],
+      "verified": [
+        "1350182725725982850"
+      ],
+      "tryouter": [
+        "1353217343357980824"
+      ],
+      "noverian": [
+        "1350181431055519774"
+      ],
+      "pro": [
+        "1350181841556836402"
+      ],
+      "veteran": [
+        "1350182201511669831"
+      ]
+    },
+    "channels": {
+      "announcements": "announcements",
+      "tryout_results": "1350182176007917739",
+      "values": "1350172182038446184",
+      "giveaways": "1337572584589627422",
+      "welcome": "1350199401426980955"
+    }
+  },
+  "1301830184307130401": {
+    "name": "Novera Alternate",
+    "roles": {
+      "management": [
+        "1301830696536379442",
+        "1301830837666320405",
+        "1301954206231695413"
+      ],
+      "verified": [
+        "1301831200822042744"
+      ],
+      "tryouter": [
+        "1353217343357980824"
+      ],
+      "noverian": [
+        "1301831096519045213"
+      ],
+      "pro": [
+        "1301831334721392640"
+      ],
+      "veteran": [
+        "1301831430783971470"
+      ]
+    },
+    "channels": {
+      "announcements": "announcements",
+      "tryout_results": "tryout-results",
+      "values": "player-values",
+      "giveaways": "giveaways"
+    }
+  },
+  "1345538548027232307": {
+    "name": "BLR: NoVera E-Sports League | [NATIONAL]",
+    "roles": {
+      "management": [
+        "1345539263042687016",
+        "1360251493252333821"
+      ],
+      "verified": [],
+      "tryouter": [],
+      "noverian": [],
+      "pro": [],
+      "veteran": []
+    },
+    "channels": {
+      "announcements": "announcements",
+      "tryout_results": "1360253118406988120",
+      "values": "1360253232806625361",
+      "giveaways": "giveaways",
+      "welcome": "1345547232648106105", 
+      "evaluation_requests": "1360251844907106365"
+    },
+    "settings": {
+      "assign_roles_on_join": false,
+      "remove_roles_on_tryout": false,
+      "assign_roles_on_tryout": false,
+      "use_sassy_language": false,
+      "disabled_commands": ["spank", "headpat"]
+    },
+    "message_style": {
+      "success": [
+        "Operation completed successfully! ✅",
+        "Command executed successfully! ✅",
+        "Action completed! ✅",
+        "Success! ✅",
+        "Command processed successfully! ✅"
+      ],
+      "error": [
+        "There was an error processing your request. Please try again. ❌",
+        "Command failed. Please check your input and try again. ❌",
+        "An error occurred. Please try again later. ❌",
+        "Unable to complete the requested action. ❌",
+        "Command error. Please try again with correct parameters. ❌"
+      ]
+    }
+  }
+}

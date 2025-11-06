@@ -1,0 +1,17 @@
+I need help troubleshooting my Discord bot built with discord.py. The bot has an advanced token management and recovery system, but it's having issues connecting to Discord properly. Here are the key files that would be helpful to diagnose the issue:
+
+1. bot.py - The main bot file that initializes the Discord client, contains command definitions, and handles events
+2. config.py - Handles token management, validation, and token retrieval from various sources
+3. auto_401_recovery.py - Monitors for auth failures and automatically attempts to recover
+4. keep_running.py - Ensures the bot stays running and restarts it if needed
+5. main.py - Flask web server for health checks and monitoring
+
+I currently have a Discord bot token that appears to be cached in token_cache.json and the bot seems to connect to Discord but may not be properly handling all commands or is disconnecting intermittently.
+
+Please analyze these files to determine:
+1. What could be causing connection issues or command handling problems
+2. How to properly configure the Discord bot token and ensure it's working
+3. How to test if the token is valid and the bot can connect properly
+4. Any improvements needed in the error handling and recovery systems
+
+I'd appreciate clear steps on how to verify Discord connection, troubleshoot token issues, and maintain a stable connection for the bot. Thanks!
