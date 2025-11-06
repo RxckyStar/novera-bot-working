@@ -772,7 +772,7 @@ def keep_alive_and_run_bot():
         logging.info("Bot is already running and responding to health checks. Exiting to prevent duplicates.")
         return
     try:
-        killed_pids = kill_other_instances("python.*bot\.py", force=True)
+        killed_pids = kill_other_instances(r"python.*bot\.py", force=True)
         if killed_pids:
             logging.info(f"Killed stale bot processes: {killed_pids}")
             time.sleep(2)
