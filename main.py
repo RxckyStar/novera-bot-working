@@ -1,19 +1,22 @@
-intents = discord.Intents.default()
-intents.message_content = True
-from discord.ext import commands
-import discord
-import asyncio
 import os
 import sys
 import time
 import json
 import logging
+import asyncio
 import threading
 import signal
 import subprocess
 import atexit
 from datetime import datetime
+
+import discord
+from discord.ext import commands
 from flask import Flask, jsonify, render_template, request, redirect, url_for
+
+# Intents defined AFTER importing discord
+intents = discord.Intents.default()
+intents.message_content = True
 
 # Import our instance manager
 from instance_manager import (
@@ -33,7 +36,6 @@ app.last_heartbeat = time.time()
 
 @app.route('/')
 def home():
-    # Check the status of the bot
     try:
         bot_status = check_bot_status()
         uptime = int(time.time() - app.start_time)
@@ -60,31 +62,15 @@ def home():
                     border-radius: 10px;
                     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
                 }}
-                h1 {{
-                    color: #2c3e50;
-                    text-align: center;
-                }}
-                .status {{
-                    padding: 15px;
-                    margin: 15px 0;
-                    border-radius: 5px;
-                }}
+                h1 {{ color: #2c3e50; text-align: center; }}
+                .status {{ padding: 15px; margin: 15px 0; border-radius: 5px; }}
                 .status.online {{
-                    background-color: #d4edda;
-                    color: #155724;
-                    border: 1px solid #c3e6cb;
+                    background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb;
                 }}
                 .status.offline {{
-                    background-color: #f8d7da;
-                    color: #721c24;
-                    border: 1px solid #f5c6cb;
+                    background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb;
                 }}
-                .info {{
-                    background-color: #e2f0fb;
-                    padding: 10px;
-                    border-radius: 5px;
-                    margin-bottom: 10px;
-                }}
+                .info {{ background-color: #e2f0fb; padding: 10px; border-radius: 5px; margin-bottom: 10px; }}
             </style>
         </head>
         <body>
@@ -121,18 +107,8 @@ def check_bot_status():
         response = requests.get("http://localhost:5001/healthz", timeout=2)
         if response.status_code == 200:
             data = response.json()
-            
-            # Get heartbeat age for accurate health check
             last_heartbeat_age = data.get("last_heartbeat_age", 9999)
-            
-            # Determine accurate bot status based on connection AND heartbeat
-            if data.get("bot_connected", False) and last_heartbeat_age < 120:
-                # Bot is connected and has recent heartbeat
-                data["truly_healthy"] = True
-            else:
-                # Bot is either disconnected or stalled
-                data["truly_healthy"] = False
-                
+            data["truly_healthy"] = bool(data.get("bot_connected", False) and last_heartbeat_age < 120)
             return data
         else:
             return {"status": "error", "bot_connected": False, "truly_healthy": False}
@@ -142,28 +118,21 @@ def check_bot_status():
 
 @app.route('/healthz')
 def healthz():
-    # Update the heartbeat whenever /healthz is called
     app.last_heartbeat = time.time()
-    
     current_time = time.time()
     heartbeat_age = current_time - app.last_heartbeat
     status = "healthy" if heartbeat_age < 30 else "warning" if heartbeat_age < 60 else "unhealthy"
-    
-    # Check if bot is running on port 5001
     bot_status = check_bot_status()
     bot_connected = bot_status.get("bot_connected", False)
     truly_healthy = bot_status.get("truly_healthy", False)
-    
-    # Overall system health depends on both the web app and bot health
     overall_status = "healthy"
     if status != "healthy" or not truly_healthy:
         if not bot_connected:
-            overall_status = "critical"  # Bot is completely down
+            overall_status = "critical"
         elif not truly_healthy:
-            overall_status = "stalled"   # Bot is running but not responding
+            overall_status = "stalled"
         else:
-            overall_status = "warning"   # Web app has issues
-    
+            overall_status = "warning"
     return jsonify({
         "status": overall_status,
         "web_status": status,
@@ -176,13 +145,11 @@ def healthz():
         "bot_heartbeat_age": bot_status.get("last_heartbeat_age", -1)
     })
 
-# Web server cleanup function
 def cleanup():
     """Clean up resources and release instance on exit"""
     logger.info("Web server shutting down, cleaning up resources")
     release_instance(WEB_PID_FILE)
 
-# Register cleanup function to run on exit
 atexit.register(cleanup)
 
 def signal_handler(sig, frame):
@@ -196,9 +163,9 @@ signal.signal(signal.SIGTERM, signal_handler)
 def is_bot_running():
     """Check if a bot process is already running"""
     try:
-        # Check for bot.py processes
+        # Raw string to avoid escape warnings
         result = subprocess.run(
-            ["pgrep", "-f", "python.*bot\.py"], 
+            ["pgrep", "-f", r"python.*bot\.py"],
             capture_output=True,
             text=True
         )
@@ -218,37 +185,15 @@ if __name__ == "__main__":
     if not claim_instance(WEB_PID_FILE, "main.py"):
         logger.error("Web server already running! Exiting to prevent duplicates.")
         sys.exit(1)
-    
+
     # Record our PID
     write_pid_file(WEB_PID_FILE)
-    
-    # We never want to start the bot from main.py
-    # Only the keep_alive instance should be running
+
+    # Only run the Flask health endpoint from this file.
     logger.info("Running Flask health endpoint only with improved instance management")
-    
     try:
-        # Run the Flask server (blocking)
         run_flask()
     except Exception as e:
         logger.critical(f"Web server crashed: {e}")
-        # Clean up
         release_instance(WEB_PID_FILE)
         sys.exit(1)
-
-
-async def __runner__():
-    token = os.getenv('DISCORD_TOKEN')
-    if not token:
-        raise RuntimeError("DISCORD_TOKEN environment variable is not set.")
-    try:
-        if 'bot' in globals():
-            await bot.start(token)
-        elif 'client' in globals():
-            await client.start(token)
-        else:
-            raise RuntimeError("No bot/client found to run.")
-    except KeyboardInterrupt:
-        pass
-
-if __name__ == "__main__":
-    asyncio.run(__runner__())
