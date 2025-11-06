@@ -6834,13 +6834,12 @@ try:
 except Exception as e:
     logging.error(f"⚠️ Failed to load cogs.tryouts: {e}")
 
-# Load public help menu (hides admin/dev-only commands)
+# ✅ Load public help menu (hides admin/dev-only commands)
 try:
     await bot.load_extension("cogs.help_public")
     logging.info("✅ Loaded cogs.help_public (Public help)")
-    except Exception as e:
-        logging.error(f"⚠️ Failed to load cogs.help_public: {e}")
-        logging.error(f"⚠️ Failed to load cogs.tryouts: {e}")
+except Exception as e:
+    logging.error(f"⚠️ Failed to load cogs.help_public: {e}")
     
     # Print final confirmation
     print(f"🤖 Logged in as {bot.user} and all systems are running.")
