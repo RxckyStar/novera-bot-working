@@ -1,0 +1,54 @@
+1️⃣ Bet Creation Command (!bet)
+A user can create a bet using !bet <amount> <match_type> <yes/no abilities> <roblox_username> [optional: private server link]
+Amount: The value in ¥ (they cannot bet more than they have)
+Match Type:
+1v1 → Goes to ⚔-1v1-duels
+2v2 → Goes to 🤝-2v2-battles
+3v3 → Goes to 💨-3v3-showdowns
+5v5 → Goes to 🏆-5v5-warzone
+Abilities: yes or no
+Roblox Username: Required for identifying match hosts
+Private Server Link (Optional): If provided, the bot will send this in DMs
+The bot removes the bet amount from the user’s value.
+The bot creates a match advertisement in the respective channel.
+2️⃣ Accepting Teammates (for 2v2, 3v3, and 5v5)
+The creator must @mention teammates.
+The bot sends DMs to teammates, asking them to accept or decline.
+If they accept, they are added to the match.
+For 2v2, only 1 teammate can be mentioned.
+For 3v3, only 2 teammates.
+For 5v5, 4 teammates.
+3️⃣ Joining a Bet (React to Enter)
+Players react to the match post in the respective channel to join.
+The bot removes the bet amount from their balance when they react.
+Users cannot enter a match with a wager higher than their balance.
+Once full, the bot locks the match and sends private server links & team details via DM.
+4️⃣ Match Result Submission (!matchresult)
+After the game, the creator of the bet must run !matchresult @winning_team.
+The bot prompts them to upload proof (screenshot, video, etc.).
+The bot sends this to ⚖｜win-approval for staff verification.
+5️⃣ Win Approval & Payout
+Staff members in ⚖｜win-approval react to approve or deny the win.
+If approved:
+Winning players receive 2x their wagered amount.
+Losing players get nothing.
+If denied:
+All players get their wagered money refunded.
+6️⃣ Additional Features
+Real GK / AI GK Selection: If match type is not 1v1 or 5v5, the bot asks if it's a real or AI GK.
+Timeout for Matches: If a match isn’t filled in 10 minutes, the bot refunds all players.
+Error Handling: Prevents multiple bets, incorrect values, and invalid commands.
+Technical Details
+The bot should store player values in a database (data_manager.py).
+The bot should track pending matches and results.
+The bot should handle currency transactions securely.
+Example Use Case:
+1️⃣ !bet 5m 2v2 yes rxcky_star → Creates a 2v2 match with 5 million ¥ wager
+2️⃣ Bot DMs teammate rxcky_star asking to accept.
+3️⃣ Ad is posted in 🤝-2v2-battles waiting for 2 challengers.
+4️⃣ Players react ✅ to join, bet amount is removed from their balance.
+5️⃣ When full, bot sends DMs with the private server link.
+6️⃣ Match is played, creator runs !matchresult @teamA.
+7️⃣ Staff in ⚖｜win-approval approves the win.
+8️⃣ Team A gets double their wager (10m each), Team B gets nothing.
+

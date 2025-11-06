@@ -1,0 +1,47 @@
+async def process_player_evaluation(channel: discord.DMChannel, user_id: int, bot: commands.Bot):
+    try:
+        # Remove the user from active_tryouts immediately to prevent duplicate processing.
+        if user_id in active_tryouts:
+            del active_tryouts[user_id]
+        logger.info(f"Processing tryout evaluation for user {user_id}")
+        # Then send the position selection prompt:
+        await channel.send("**📋 Position Selection:**\nWhat position is the player trying out for? Options: `cf`, `lw/rw`, `cm`, `gk`")
+        pos_msg = await bot.wait_for(
+            'message',
+            check=lambda m: m.author.id == user_id and m.channel == channel,
+            timeout=60.0
+        )
+        position = pos_msg.content.strip().lower()
+        if position not in ['cf', 'lw/rw', 'cm', 'gk']:
+            await channel.send("❌ Invalid position. Please restart the tryout evaluation.")
+            return
+
+        # Continue asking for the skill ratings...
+        await channel.send("**🎯 Shooting:**\nRate shooting out of 10:")
+        shoot_msg = await bot.wait_for('message', check=lambda m: m.author.id == user_id and m.channel == channel, timeout=60.0)
+        shooting = int(shoot_msg.content.strip())
+
+        await channel.send("**🔗 Passing:**\nRate passing out of 10:")
+        pass_msg = await bot.wait_for('message', check=lambda m: m.author.id == user_id and m.channel == channel, timeout=60.0)
+        passing = int(pass_msg.content.strip())
+
+        await channel.send("**💨 Dribbling:**\nRate dribbling out of 10:")
+        drib_msg = await bot.wait_for('message', check=lambda m: m.author.id == user_id and m.channel == channel, timeout=60.0)
+        dribbling = int(drib_msg.content.strip())
+
+        await channel.send("**🛡️ Defending:**\nRate defending out of 10:")
+        def_msg = await bot.wait_for('message', check=lambda m: m.author.id == user_id and m.channel == channel, timeout=60.0)
+        defending = int(def_msg.content.strip())
+
+        goalkeeping = None
+        if position == 'gk':
+            await channel.send("**🥅 Goalkeeping:**\nRate goalkeeping out of 10:")
+            gk_msg = await bot.wait_for('message', check=lambda m: m.author.id == user_id and m.channel == channel, timeout=60.0)
+            goalkeeping = int(gk_msg.content.strip())
+
+        # [Calculation and posting code follows here...]
+        # Calculate the tryout value and send the results in the appropriate channels.
+        
+    except Exception as e:
+        logger.error(f"Error processing tryout evaluation for user {user_id}: {e}", exc_info=True)
+        await channel.send("❌ An error occurred while processing your tryout evaluation. Please try again.")

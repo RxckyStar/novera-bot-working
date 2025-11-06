@@ -1,0 +1,78 @@
+Below is one way you can revert your modal implementation back to the “original working version” that uses a custom callback assigned directly to the modal rather than the newer on_submit interface. You can use this exact code and then compare it with your current implementation to ensure nothing is changed. After the code, I’ve included an explanation for why this approach works as expected.
+
+Exact Code to Restore (Using modal.callback):
+
+python
+Copy
+
+# Create a modal with the title "Roblox Username"
+modal = discord.ui.Modal(title="Roblox Username")
+
+# Create a text input for the Roblox username
+username_input = discord.ui.TextInput(
+    label="Your Roblox Username",
+    custom_id="username_input",
+    style=discord.TextStyle.short,
+    placeholder="Enter your Roblox username",
+    required=True
+)
+
+# Add the text input to the modal
+modal.add_item(username_input)
+
+# Define what happens when the modal is submitted
+async def modal_callback(modal_interaction):
+    # Capture the username from the text input
+    self.roblox_username = username_input.value
+
+    # Send an ephemeral confirmation message showing the value
+    await modal_interaction.response.send_message(
+        f"Roblox username set to: {self.roblox_username}", ephemeral=True
+    )
+
+    # Call your update function (ensure it's defined correctly)
+    self.update_completion_status()
+    
+    # Edit the original message (e.g., to update the view, if needed)
+    await self.message.edit(view=self)
+
+# Set the modal's callback (using modal.callback, not on_submit)
+modal.callback = modal_callback
+
+# Finally, send the modal to the user via the interaction response
+await interaction.response.send_modal(modal)
+Explanation:
+
+Modal and Text Input Creation:
+The code creates a discord.ui.Modal with a title and adds a TextInput to it. This is exactly the same as your original setup.
+
+Defining the Callback:
+Instead of using the newer on_submit method, we define an async def modal_callback(modal_interaction) function. This nested asynchronous function is defined in the same scope that contains the username_input variable.
+
+Closure Effect:
+Even though modal_callback is an inner function, it “closes over” the variable username_input. This means that when the callback runs, it has direct access to username_input.value. In this implementation, that is exactly how you retrieve the user’s input.
+
+Assignment of the Callback:
+The callback is then assigned to the modal by setting modal.callback = modal_callback. This pattern (assigning a function to .callback) is fully supported in Discord.py v2.x and is what your original code used. It will be invoked when the modal is submitted.
+
+Why This Works:
+
+Direct Callback Assignment:
+By setting the callback attribute directly, you bypass the potential complications or changes introduced by switching over entirely to the new on_submit system.
+
+Variable Scope (Closure):
+The inner function modal_callback retains access to the variables (like username_input) from its enclosing scope. Even though it is defined within the same function, Python’s closure mechanism ensures that you can reference username_input.value later.
+
+Maintaining Existing Behavior:
+Since this was the pattern your entire (4K-line) codebase was built upon, reverting to this implementation ensures that all existing features (like commands such as checkvalue, eval, tryoutsresults, headpat, and others) will work as they always have without breaking any functionality that depends on the older modal implementation.
+
+Important Notes for Future Reference:
+
+Avoid Changing to on_submit:
+Although Discord.py v2.x supports a separate on_submit method for modals, switching to that can break parts of your existing code if you have built your logic around the callback assignment approach.
+
+Keep the Callback as a Closure:
+Defining the callback inline (as shown) allows you to capture any variables from the surrounding context easily. This is why your original implementation works well and why you shouldn’t refactor it into custom classes or change it to on_submit unless you completely rework your logic.
+
+Consistency is Key:
+Since your bot has many interconnected features (commands like checkvalue, spank, confess, etc.), it’s best to maintain a consistent implementation pattern across your code. This means that reverting this modal back to using modal.callback ensures that everything remains compatible.

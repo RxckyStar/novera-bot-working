@@ -1,0 +1,844 @@
+import os
+import sys
+import logging
+import discord
+from discord.ext import commands, tasks
+from discord import app_commands
+import discord.ui as ui
+import asyncio
+import time
+import math
+import random
+import re
+import psutil
+from typing import Optional, List, Union, Dict, Any, Tuple
+from flask import Flask, jsonify
+import threading
+import utils
+import atexit
+import signal
+from datetime import datetime, timedelta
+import json
+import subprocess
+import traceback
+
+# Import proper ConnectionClosedError class from websockets
+try:
+    from websockets.exceptions import ConnectionClosedError
+except ImportError:
+    ConnectionClosedError = None
+
+from timeout_handlers import with_timeout, wait_for_safe
+
+# Import our instance manager
+from instance_manager import (
+    claim_instance, release_instance, kill_other_instances, write_pid_file,
+    WATCHDOG_PID_FILE, BOT_PID_FILE, WEB_PID_FILE
+)
+
+# Configure logging for better error tracking
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("bot.log")
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Enhanced token validation and import with fallback mechanism
+try:
+    token_cache_refresh = os.path.exists("refresh_token_cache")
+    if token_cache_refresh:
+        try:
+            os.remove("refresh_token_cache")
+            logger.info("Token cache refresh flag detected - forcing token reload")
+        except Exception:
+            pass
+        
+    from config import TOKEN, COMMAND_PREFIX, DATA_FILE, get_token, load_token_from_cache, clean_token, validate_token
+    
+    if TOKEN is None:
+        logger.critical("TOKEN is None from config, attempting emergency retrieval")
+        try:
+            TOKEN = get_token()
+            logger.info("Successfully retrieved token from get_token()")
+        except Exception as e:
+            logger.critical(f"Emergency token retrieval failed: {e}")
+            try:
+                cached_token = load_token_from_cache()
+                if cached_token:
+                    TOKEN = cached_token
+                    logger.warning("Using emergency cached token after get_token() failure")
+                else:
+                    logger.critical("No cached token available for emergency recovery")
+                    TOKEN = None
+            except Exception as cache_err:
+                logger.critical(f"Cache retrieval also failed: {cache_err}")
+                TOKEN = None
+    
+    if TOKEN:
+        TOKEN = clean_token(TOKEN)
+        if not validate_token(TOKEN):
+            logger.critical(f"Invalid token format: length={len(TOKEN)}, validation failed")
+            raw_token = os.environ.get('DISCORD_TOKEN')
+            if raw_token and len(raw_token) >= 50:
+                logger.warning("Using raw environment token as last resort")
+                TOKEN = clean_token(raw_token)
+            else:
+                TOKEN = None
+    
+except ImportError as e:
+    logger.critical(f"Failed to import config: {e}")
+    TOKEN = os.environ.get('DISCORD_TOKEN')
+    if TOKEN:
+        TOKEN = TOKEN.strip().replace('"', '').replace("'", '')
+    COMMAND_PREFIX = "!"
+    DATA_FILE = "member_data.json"
+    if TOKEN and len(TOKEN) >= 50:
+        try:
+            import json
+            from datetime import datetime
+            with open("token_cache.json", 'w') as f:
+                json.dump({
+                    "token": TOKEN,
+                    "timestamp": datetime.now().isoformat(),
+                    "validated": True,
+                    "emergency": True
+                }, f)
+            logger.info("Created emergency token cache during import failure")
+        except Exception as cache_err:
+            logger.warning(f"Failed to create emergency token cache: {cache_err}")
+
+from data_manager import DataManager
+from activity_tracker import ActivityTracker
+from utils import (
+    has_value_management_role, format_ranking_message,
+    has_spank_permission, get_random_spank_response,
+    get_random_headpat_response, get_spank_warning_response
+)
+from leaving_messages import LEAVING_MESSAGES
+import tryouts
+logger.info("Successfully imported tryouts module")
+
+active_tryouts = {}
+tryouts.set_active_tryouts(active_tryouts)
+
+# =============================
+# MOMMY PHRASE VARIANTS WITH EMOJIS
+# =============================
+MOMMY_ERROR_VARIANTS = [
+    "😱 Oh dear, Mommy had a little boo boo! Please try again, sweetie! 😢",
+    "😓 Oopsie, something went awry, my darling! Mommy is on it! 🌈",
+    "😖 Oh no dear, Mommy's system just tripped over a rainbow! Try again, honey! 💕",
+    "😞 Yikes, that didn't go as planned, sweetie! Mommy needs a moment! 😇",
+    "😬 Whoopsie, Mommy encountered a tiny hiccup there! Please forgive me, darling! 😘",
+    "🥺 Aww no, something went wrong in Mommy's circuits! Let's try that again, precious! 💫",
+    "😅 Oops! Mommy stumbled a bit there! Give me another chance, sweetie! 🌸",
+    "😔 Oh my, that didn't work quite right! Mommy needs to fix her makeup, darling! 🎀",
+    "🤕 Ouchie! Mommy had a small accident! Let's give it another shot, love! 💝",
+    "😳 Oh goodness, that wasn't supposed to happen! Mommy will do better, sweetheart! ✨"
+]
+
+MOMMY_SUCCESS_VARIANTS = [
+    "🎉 Yay, Mommy is so proud of you, darling! Fantastic work! 💖",
+    "👏 Hooray, you've done it, sweetie! Mommy loves your effort! 🌟",
+    "🏆 Bravo, my precious! Mommy is absolutely delighted by your performance! 😍",
+    "✨ Wonderful, darling—Mommy adores your work! Keep shining! 🌈",
+    "💐 Splendid job, sweetheart! Mommy is cheering for you with all her heart! 💝",
+    "🌺 You're making Mommy's heart flutter with joy, darling! Outstanding! 💫",
+    "🎈 That's my talented little star! Mommy couldn't be more pleased! 🥰",
+    "🌟 Look at you go, precious! Mommy's heart is bursting with pride! 💕",
+    "🏅 Simply perfect, my love! You always know how to make Mommy smile! 🤗",
+    "🌸 Magnificent work, sweetie! You're everything Mommy hoped for and more! 💖"
+]
+
+MOMMY_PERMISSION_DENIED = [
+    "🚫 Oh dear, you don't have permission for that, my love! Please ask a staff member, darling! 🙅",
+    "❌ Oopsie, you're not allowed to do that, sweetheart! Mommy says no, try again later! 🙇",
+    "🙅 Oh no, darling, that command is off limits for you! Please be patient, sweetie! 🤗",
+    "🛑 Yikes, permission denied, my dear! Mommy is sorry but you can't do that now! 😔",
+    "❎ Oh dear, you lack the required permission, my love! Please check with staff, darling! 🤷",
+    "🔒 Not so fast, precious! That's for special permissions only! Ask staff for help! 💕",
+    "⛔ Aww honey, Mommy can't let you do that just yet! Speak with staff first! 🎀",
+    "🚧 Hold on sweetie, that area is restricted! Let's get proper permission first! 💫",
+    "⚠️ Sorry darling, but Mommy must protect her special commands! Ask staff nicely! 🌸",
+    "🔐 That's under lock and key, my love! Get staff approval first! ✨"
+]
+
+MOMMY_CHECKVALUE_VARIANTS = [
+    "💖 Darling, your value sparkles at ¥{value} million! Mommy is so proud of you! ✨",
+    "💎 Sweetheart, your value shines at an amazing ¥{value} million—keep dazzling, my star! 🌟",
+    "💰 Oh my, your value stands tall at ¥{value} million! Mommy is over the moon for you! 🎉",
+    "🌈 Bravo, my precious! Your value is a fabulous ¥{value} million. Mommy loves your shine! 😍",
+    "🔥 Darling, you're on fire with a value of ¥{value} million! Keep making Mommy proud! 🥰",
+    "💫 Look at that gorgeous value of ¥{value} million! You're growing so beautifully! 🎀",
+    "💝 Oh sweetie, ¥{value} million looks absolutely stunning on you! Keep climbing! 🌸",
+    "✨ What a precious value of ¥{value} million! Mommy's little star is shining bright! 💖",
+    "🌟 Darling, ¥{value} million suits you perfectly! You're becoming so valuable! 💫",
+    "💅 Serving elegance with that ¥{value} million value! Mommy is living for it! 🎭",
+    "💫 Oh la la! ¥{value} million value? Mommy thinks you're absolutely fabulous! 💃",
+    "🌠 Sweetheart, your value of ¥{value} million has Mommy absolutely swooning! 😍",
+    "💝 With a value of ¥{value} million, you're making Mommy's heart flutter! So proud! 🦋",
+    "🏆 Darling, a value of ¥{value} million? You're becoming Mommy's champion! 🎖️",
+    "💎 Mommy is blown away by your ¥{value} million value! You're becoming such a gem! 💍",
+    "✨ Precious one, your ¥{value} million value has Mommy seeing stars! Keep shining! ⭐",
+    "🌈 With ¥{value} million in value, you're painting Mommy's world with color! 🎨",
+    "🚀 Shooting to the stars with that ¥{value} million value! Mommy's so impressed! 🌠",
+    "👑 Wearing that ¥{value} million value like royalty! Mommy bows to you, my liege! 🧎‍♀️",
+    "🌺 Blooming beautifully with a ¥{value} million value! Mommy loves watching you grow! 🌱"
+]
+
+MOMMY_LOW_VALUE_VARIANTS = [
+    "💸 Only ¥{value} million? Darling, Mommy spends that much on a Gucci bag! You need to aim higher! 👜",
+    "🤏 ¥{value} million? Is that all you've got, sweetie? Mommy's manicure costs more than that! 💅",
+    "😒 Hmm, ¥{value} million... Mommy spent more than that on breakfast this morning. Do better, darling! 🍳",
+    "🧐 ¥{value} million? Oh, bless your heart! That's barely enough to buy Mommy's favorite lipstick! 💄",
+    "🙄 Darling, ¥{value} million is what Mommy tips her hairstylist! You're going to need to work harder! 💇‍♀️",
+    "😬 Oh sweetie... ¥{value} million? Mommy's champagne costs more than that! Time to level up! 🍾",
+    "👠 ¥{value} million wouldn't even buy one of Mommy's Louboutins, darling! Keep grinding! 👠",
+    "🥱 Mommy yawns at your ¥{value} million value. That's pocket change for a bad bitch like me! 💰",
+    "💳 ¥{value} million? Mommy spends that much on a single swipe of her credit card! Try harder, precious! 💳",
+    "🤷‍♀️ ¥{value} million? Darling, Mommy misplaces more than that in her couch cushions! Do better! 🛋️",
+    "👛 Oh honey, ¥{value} million is just the loose change in Mommy's purse! You're going to need more to impress me! 💵",
+    "🍸 ¥{value} million? That's barely enough for Mommy's martini, sweetie! Keep hustling! 🍸",
+    "👑 ¥{value} million is what Mommy pays her assistant to fetch coffee, darling! Aim higher! ☕",
+    "💍 Oh dear, ¥{value} million wouldn't even buy the box for Mommy's jewelry! We need to work on this! 💎",
+    "🧠 Mommy's thinking... ¥{value} million is cute, but it's giving 'allowance' not 'income'! Level up, sweetie! 📈",
+    "👜 ¥{value} million? Mommy wouldn't even bend down to pick that up off the sidewalk! Try harder, love! 🚶‍♀️",
+    "🎭 With ¥{value} million, you're still in the nosebleed section of life, darling! Mommy sits front row! 🎟️",
+    "🛍️ Oh sweetie, ¥{value} million is what Mommy spends at duty-free! You've got potential though! ✈️",
+    "🕶️ ¥{value} million? Mommy's sunglasses cost more, darling! But keep working, Mommy believes in you! 😎",
+    "🥂 Hmm, ¥{value} million... That wouldn't even cover Mommy's weekend brunch! Keep grinding, sweetie! 🍽️"
+]
+
+MOMMY_ZERO_VALUE_VARIANTS = [
+    "💖 Oh sweetie, your value is just starting to bloom at ¥0 million! Mommy believes in your potential! ✨",
+    "🌱 Darling, everyone starts at ¥0 million! Mommy can't wait to see how you'll grow! 🌿",
+    "🤗 No value yet, my precious? That just means you've got nowhere to go but up! Mommy's cheering for you! 📈",
+    "💎 Value isn't just a number, sweetie! Your ¥0 million is just the beginning of your journey! 🚀",
+    "🌟 Zero today, hero tomorrow! Mommy believes your value will skyrocket soon! 💫",
+    "🔮 Mommy sees great value in your future, darling! Your ¥0 million is just temporary! ⏳",
+    "💕 Sometimes the most precious gems start unpolished! Your ¥0 million value won't stay that way for long! 💍",
+    "🌈 Don't worry about that ¥0 million, sweetie! Mommy knows you're priceless already! 💝",
+    "🌠 Your star is just beginning to shine with ¥0 million! Mommy knows you'll be dazzling soon! ✨",
+    "🤩 Oh darling, your value of ¥0 million just means you're a blank canvas ready for greatness! 🎨",
+    "😂 ¥0 million? Oh honey, that's not a value, that's a void! Did you even try yet, sweetie? 🤭",
+    "👻 ¥0 million? Darling, ghosts have more substance than your value right now! Time to materialize something! 💨",
+    "🧮 Mommy's calculator is broken—it keeps saying your value is ¥0 million! Have you considered actually doing something? 🔧",
+    "🔍 Mommy's looking for your value but all she sees is ¥0 million! Are you playing hide and seek with your potential? 🙈",
+    "🏜️ Your value is like a desert mirage—Mommy sees ¥0 million when she gets close! Let's find some real water, shall we? 💦",
+    "📉 With ¥0 million, your value chart is flatter than Mommy's champagne after a week! Let's add some bubbles, darling! 🍾",
+    "🪫 Your value battery is showing ¥0 million! Have you tried turning yourself off and on again, sweetie? 🔌",
+    "🦖 Your ¥0 million value is so extinct, it belongs in a museum with the dinosaurs! Let's evolve, shall we? 🧪",
+    "👑 With ¥0 million, you're the undisputed monarch of the Nothing Kingdom! Ready to expand your territories, darling? 🗺️",
+    "🌵 Your value of ¥0 million is like a cactus without spines—not even interesting enough to hurt! Add some personality, sweetie! 🌸",
+    "🧊 ¥0 million? Mommy's seen more value in melting ice cubes! At least they become water eventually! ❄️",
+    "🎮 ¥0 million? Darling, even NPCs have more utility than that! Are you playing the game or just decorating the screen? 🕹️",
+    "📱 Your value of ¥0 million reminds Mommy of her phone at 1%—barely registering and about to disappear! Plug in, sweetie! 🔋",
+    "🚫 ¥0 million? That's not a value—it's an error message! Have you tried actually participating, darling? 🔄",
+    "🎭 With ¥0 million, you're playing the role of 'extra' in your own life story! Ready for a speaking part yet, sweetie? 🎬"
+]
+
+MOMMY_ACTIVITY_VARIANTS = [
+    "🌟 Darling, your activity score is {activity}! Mommy loves your energy! 🔥",
+    "🚀 Sweetheart, you've been super active with a score of {activity}! Mommy is impressed! 💪",
+    "🎊 Oh my, you're buzzing with an activity score of {activity}! Keep it up, my love! 😘",
+    "⚡ Bravo, my precious! Your activity level is {activity}! Mommy is cheering you on! 👏",
+    "🌈 Darling, you're rocking it with an activity score of {activity}! Mommy is so proud! 🎉",
+    "💫 Look at you go with an activity score of {activity}! Such a busy bee! 🐝",
+    "🎯 Target achieved with {activity} activity points! Mommy loves your dedication! 💕",
+    "🌺 Blooming beautifully with {activity} activity! You're growing so well! 🌱",
+    "⭐ Shining bright with {activity} activity points! Keep sparkling, sweetie! ✨",
+    "🎨 Painting the server active with a score of {activity}! Mommy's little artist! 🖌️"
+]
+
+# =============================
+# GLOBAL DICTIONARIES FOR MATCHES & RESULTS
+# =============================
+active_matches = {}         # For match creation flows (keyed by creator id)
+active_server_messages = {} # For server message interactive flows (keyed by author id)
+active_matches_by_ad = {}   # For live match advertisement state
+pending_results = {}        # For finished matches awaiting result submission
+pending_join_requests = {}  # For DM join requests
+
+# =============================
+# WEB SERVER FOR REPLIT AUTOSCALE
+# =============================
+app = Flask(__name__)
+start_time = time.time()  # For uptime tracking
+last_heartbeat = time.time()  # Track last activity for health checks
+
+@app.route('/')
+def home():
+    return "🌟 Novera Assistant is up and running, darling! 🌟"
+
+@app.route('/healthz')
+def healthz():
+    """Health check endpoint for monitoring"""
+    bot_connected = bot is not None and bot.is_ready()
+    last_heartbeat_age = time.time() - last_heartbeat if 'last_heartbeat' in globals() else 9999
+    
+    if not bot_connected:
+        status = "disconnected"
+    elif last_heartbeat_age > 120:
+        status = "stalled"
+    elif last_heartbeat_age > 60:
+        status = "warning"
+    else:
+        status = "healthy"
+    
+    error_count = 0
+    try:
+        if os.path.exists("bot_errors.log"):
+            file_mod_time = os.path.getmtime("bot_errors.log")
+            if time.time() - file_mod_time < 3600:
+                with open("bot_errors.log", "r") as f:
+                    errors = f.readlines()
+                    error_count = sum(1 for line in errors[-100:] if line.strip())
+    except Exception as e:
+        logging.error(f"Error counting recent errors: {e}")
+    
+    latency = -1
+    try:
+        if bot is not None and bot.is_ready() and bot.latency > 0:
+            latency = round(bot.latency * 1000)
+    except Exception as e:
+        logging.error(f"Error getting bot latency: {e}")
+    
+    status_data = {
+        "status": status,
+        "uptime": int(time.time() - start_time),
+        "bot_connected": bot_connected,
+        "last_heartbeat_age": int(last_heartbeat_age),
+        "pid": os.getpid(),
+        "recent_errors": error_count,
+        "latency_ms": latency,
+        "guilds_count": len(bot.guilds) if bot is not None and bot.is_ready() else 0,
+        "diagnostics": {
+            "memory_usage_mb": psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024) if 'psutil' in sys.modules else -1,
+            "cpu_percent": psutil.Process(os.getpid()).cpu_percent() if 'psutil' in sys.modules else -1,
+            "thread_count": threading.active_count(),
+            "connection_state": "connected" if bot_connected and hasattr(bot, 'ws') else "disconnected",
+            "event_loop_active": True if bot_connected else False
+        }
+    }
+    return jsonify(status_data)
+
+@app.route('/monitor')
+def monitor():
+    last_heartbeat_age = time.time() - last_heartbeat if 'last_heartbeat' in globals() else 9999
+    
+    if not bot.is_ready():
+        bot_status = "disconnected"
+    elif last_heartbeat_age > 120:
+        bot_status = "stalled"
+    elif last_heartbeat_age > 60:
+        bot_status = "warning"
+    else:
+        bot_status = "healthy"
+        
+    status = {
+        "status": bot_status,
+        "uptime": int(time.time() - start_time),
+        "pid": os.getpid(),
+        "time": datetime.now().isoformat(),
+        "last_heartbeat": last_heartbeat if 'last_heartbeat' in globals() else None,
+        "heartbeat_age": int(last_heartbeat_age)
+    }
+    
+    if hasattr(bot, "_processed_messages"):
+        current_time = time.time()
+        recent_messages = {}
+        for msg_id, data in bot._processed_messages.items():
+            msg_time = data.get('timestamp', 0)
+            if current_time - msg_time < 60:
+                recent_messages[msg_id] = data
+                
+        recent_entries = sorted(
+            [(msg_id, data.get('timestamp', 0)) for msg_id, data in bot._processed_messages.items()],
+            key=lambda x: x[1],
+            reverse=True
+        )[:10]
+        
+        recent_details = []
+        for msg_id, _ in recent_entries:
+            data = bot._processed_messages[msg_id]
+            recent_details.append({
+                "id": msg_id,
+                "time": datetime.fromtimestamp(data.get('timestamp', 0)).isoformat(),
+                "pid": data.get('pid', 'unknown'),
+                "command": data.get('command', None)
+            })
+        
+        status["processed_messages"] = {
+            "total_count": len(bot._processed_messages),
+            "recent_count": len(recent_messages),
+            "recent_samples": recent_details
+        }
+    
+    lock_files = [f for f in os.listdir('.') if f.startswith('message_') and f.endswith('.lock')]
+    status["lock_files"] = {
+        "count": len(lock_files),
+        "samples": lock_files[:5] if lock_files else []
+    }
+    
+    status["cache_file"] = {
+        "exists": os.path.exists("processed_messages_cache.json"),
+        "size": os.path.getsize("processed_messages_cache.json") if os.path.exists("processed_messages_cache.json") else 0,
+        "modified": datetime.fromtimestamp(os.path.getmtime("processed_messages_cache.json")).isoformat() if os.path.exists("processed_messages_cache.json") else None
+    }
+    
+    return jsonify(status)
+
+@app.route('/restart', methods=['POST'])
+def restart_bot_endpoint():
+    try:
+        if bot is not None:
+            asyncio.create_task(bot.close())
+        return jsonify({"status": "restarting", "message": "Bot restart initiated"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Failed to restart: {str(e)}"}), 500
+
+@app.route('/test_spill')
+def test_spill():
+    logging.info("Testing spill command via web route")
+    guild = None
+    for g in bot.guilds:
+        guild = g
+        break
+    if not guild:
+        return "No guilds found"
+    try:
+        from player_drama import PlayerDramaGenerator
+        all_values = data_manager.get_all_member_values()
+        if all_values:
+            sorted_members = sorted(all_values.items(), key=lambda x: x[1], reverse=True)
+            top_5 = sorted_members[:5]
+            top_players = ', '.join([f'{member_id}: {value}' for member_id, value in top_5])
+            logging.info(f"Top 5 highest value players: {top_players}")
+        drama_generator = PlayerDramaGenerator(data_manager)
+        logging.info(f"Generating drama for server {guild.id} with high-value threshold {drama_generator.high_value_threshold}")
+        drama_scenario = drama_generator.generate_drama(guild)
+        return f"<h1>Test Spill Command</h1><p>{drama_scenario}</p>"
+    except Exception as e:
+        logging.error(f"Error generating player drama: {e}", exc_info=True)
+        return f"<h1>Error</h1><p>Failed to generate drama: {str(e)}</p>"
+
+@app.route('/cron')
+def cron_endpoint():
+    last_heartbeat_age = time.time() - last_heartbeat if 'last_heartbeat' in globals() else 9999
+    is_healthy = False
+    if bot is not None and bot.is_ready() and last_heartbeat_age < 120:
+        is_healthy = True
+        uptime = int(time.time() - start_time)
+    else:
+        uptime = None
+        
+    logger.info(f"Cron health check: Connected={bot is not None and bot.is_ready()}, Heartbeat age={int(last_heartbeat_age)}s, Healthy={is_healthy}")
+    
+    if not is_healthy:
+        try:
+            logging.warning("Cron endpoint detected unhealthy bot - triggering restart")
+            def restart_thread():
+                try:
+                    if bot is not None:
+                        asyncio.run_coroutine_threadsafe(bot.close(), bot.loop)
+                    time.sleep(5)
+                    for lock_file in ["bot.lock", "auto_401_recovery.pid", "401_recovery_startup.lock"]:
+                        if os.path.exists(lock_file):
+                            os.remove(lock_file)
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                except Exception as e:
+                    logging.error(f"Failed in restart thread: {e}")
+            threading.Thread(target=restart_thread, daemon=True).start()
+            return jsonify({
+                "status": "restarting",
+                "message": "Bot was down - restart initiated"
+            })
+        except Exception as e:
+            logging.error(f"Error restarting bot from cron endpoint: {e}")
+            return jsonify({
+                "status": "error",
+                "message": f"Failed to restart bot: {str(e)}"
+            }), 500
+    
+    return jsonify({
+        "status": "ok",
+        "bot_connected": True,
+        "uptime": uptime
+    })
+
+def run_webserver():
+    app.run(host="0.0.0.0", port=5001, debug=False)
+
+def keep_alive():
+    """Start the Flask server in a separate thread"""
+    def run():
+        app.run(host='0.0.0.0', port=5001)
+    thread = threading.Thread(target=run)
+    thread.daemon = True
+    thread.start()
+
+# =============================
+# SINGLE INSTANCE CHECK & CLEANUP
+# =============================
+LOCK_FILE = BOT_PID_FILE
+PID_FILE = BOT_PID_FILE
+
+def remove_lock_files():
+    current_pid = os.getpid()
+    for file in [LOCK_FILE, PID_FILE]:
+        if os.path.exists(file):
+            try:
+                with open(file, 'r') as f:
+                    content = f.read().strip()
+                    if content.isdigit():
+                        file_pid = int(content)
+                        if file_pid == current_pid:
+                            logger.info(f"Removing our own lock file {file} with PID {file_pid}")
+                            os.remove(file)
+                        else:
+                            try:
+                                os.kill(file_pid, 0)
+                                logger.warning(f"Lock file {file} with PID {file_pid} belongs to a running process, not removing (our PID: {current_pid})")
+                            except OSError:
+                                logger.info(f"Removing stale lock file {file} with PID {file_pid}")
+                                os.remove(file)
+                    else:
+                        logger.info(f"Removing lock file {file} with non-PID content")
+                        os.remove(file)
+            except Exception as e:
+                logger.error(f"Error processing lock file {file}: {e}")
+                if "--force-remove-locks" in sys.argv:
+                    try:
+                        os.remove(file)
+                        logger.warning(f"Forcibly removed lock file {file} due to --force-remove-locks flag")
+                    except Exception as e2:
+                        logger.error(f"Failed to forcibly remove {file}: {e2}")
+
+def cleanup():
+    global bot_instance_claimed
+    try:
+        logger.info("Performing bot cleanup with enhanced reliability checks...")
+        try:
+            if os.path.exists("bot_running.lock"):
+                os.remove("bot_running.lock")
+                logger.info("Removed bot_running.lock during cleanup")
+        except Exception as lock_err:
+            logger.warning(f"Failed to remove running lock during cleanup: {lock_err}")
+        try:
+            if "DISCORDSDK_PROCESS_ID" in os.environ:
+                del os.environ["DISCORDSDK_PROCESS_ID"]
+                logger.info("Cleared DISCORDSDK_PROCESS_ID environment variable")
+        except Exception as env_err:
+            logger.warning(f"Failed to clear environment variable: {env_err}")
+        try:
+            release_instance(BOT_PID_FILE)
+            bot_instance_claimed = False
+            logger.info("Released bot instance in cleanup function")
+        except Exception as release_err:
+            logger.warning(f"Failed to release instance during cleanup: {release_err}")
+        try:
+            remove_lock_files()
+            logger.info("Removed legacy lock files")
+        except Exception as lock_removal_err:
+            logger.warning(f"Error removing lock files: {lock_removal_err}")
+        try:
+            loop = asyncio.get_event_loop() if asyncio.get_event_loop().is_running() else None
+            if loop:
+                tasks = [t for t in asyncio.all_tasks(loop=loop) if t is not asyncio.current_task(loop=loop)]
+                if tasks:
+                    logger.info(f"Cancelling {len(tasks)} remaining asyncio tasks")
+                    for task in tasks:
+                        task.cancel()
+        except Exception as task_err:
+            logger.warning(f"Failed to cancel asyncio tasks: {task_err}")
+        logger.info("Cleanup completed successfully, darling!")
+    except Exception as e:
+        logger.error(f"Error during cleanup: {e}")
+
+def start_bot_background():
+    try:
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        from timeout_handlers import safe_task
+        
+        @safe_task
+        async def start_bot():
+            try:
+                async with bot:
+                    await bot.start(TOKEN)
+            except ConnectionClosedError as e:
+                logger.warning(f"Websocket connection closed unexpectedly: {e}")
+                logger.info("Will automatically attempt to reconnect...")
+                await asyncio.sleep(5)
+            except Exception as e:
+                if ConnectionClosedError is None and "ConnectionClosedError" in str(type(e)):
+                    logger.warning(f"Websocket connection closed (string match): {e}")
+                    logger.info("Will automatically attempt to reconnect...")
+                    await asyncio.sleep(5)
+                else:
+                    logger.critical(f"Bot startup failed: {e}")
+                    raise
+        
+        loop.create_task(start_bot())
+        loop.run_forever()
+    except Exception as e:
+        logger.critical(f"Bot encountered an error: {e}")
+        raise
+
+def keep_alive_and_run_bot():
+    max_retries = 10
+    retry_count = 0
+    last_error = None
+    backoff_time = 5
+    max_backoff = 300
+    error_log_file = f"bot_errors.log"
+    error_logger = logging.getLogger("bot_errors")
+    error_logger.setLevel(logging.ERROR)
+    if not error_logger.handlers:
+        error_handler = logging.FileHandler(error_log_file)
+        error_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+        error_logger.addHandler(error_handler)
+    
+    from task_wrapper import ensure_task, safe_timeout
+    
+    @ensure_task
+    async def check_bot_health_async():
+        try:
+            import aiohttp
+            async with safe_timeout(3.0):
+                async with aiohttp.ClientSession() as session:
+                    async with session.get("http://localhost:5001/healthz") as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            bot_pid = data.get("pid")
+                            if bot_pid and psutil.pid_exists(bot_pid):
+                                logger.info(f"Found healthy bot instance running with PID {bot_pid}")
+                                return True
+                        return False
+        except Exception as e:
+            logger.error(f"Error checking bot health: {e}")
+            return False
+    
+    def is_bot_responding():
+        try:
+            import requests
+            response = requests.get("http://localhost:5001/healthz", timeout=3)
+            if response.status_code == 200:
+                data = response.json()
+                bot_pid = data.get("pid")
+                if bot_pid and psutil.pid_exists(bot_pid):
+                    logger.info(f"Found healthy bot instance running with PID {bot_pid}")
+                    return True
+            return False
+        except Exception:
+            return False
+    
+    if is_bot_responding():
+        logger.info("Bot is already running and responding to health checks. Exiting to prevent duplicates.")
+        return
+    
+    try:
+        killed_pids = kill_other_instances("python.*bot\.py", force=True)
+        if killed_pids:
+            logger.info(f"Killed stale bot processes: {killed_pids}")
+            time.sleep(2)
+    except Exception as e:
+        logger.warning(f"Error when trying to kill stale processes: {e}")
+    
+    while True:
+        bot_instance_claimed = False
+        try:
+            if not claim_instance(BOT_PID_FILE, "bot.py"):
+                logger.error(f"Bot already running with PID in {BOT_PID_FILE}, exiting to prevent duplicates.")
+                try:
+                    with open(BOT_PID_FILE, 'r') as f:
+                        pid = int(f.read().strip())
+                    if not psutil.pid_exists(pid):
+                        logger.warning(f"Found stale PID file for non-existent process {pid}. Removing.")
+                        os.remove(BOT_PID_FILE)
+                        continue
+                except (FileNotFoundError, ValueError, PermissionError) as e:
+                    logger.warning(f"Error checking PID file: {e}")
+                time.sleep(30)
+                continue
+            
+            bot_instance_claimed = True
+            logger.info(f"Bot claimed instance with PID: {os.getpid()} using improved instance management")
+            debug_pid = os.getpid()
+            logger.debug(f"Bot initialization with process ID: {debug_pid}")
+            keep_alive()
+            logger.info("Flask web server started on port 5001, darling!")
+            time.sleep(1)
+            retry_count = 0
+            backoff_time = 5
+            
+            try:
+                if not TOKEN:
+                    logger.warning("TOKEN is missing, attempting emergency token retrieval")
+                    from importlib import reload
+                    import config as config_module
+                    reload(config_module)
+                    clean_token_final = config_module.TOKEN
+                    if not clean_token_final:
+                        raise ValueError("Failed to retrieve token after reload")
+                else:
+                    clean_token_final = TOKEN
+                
+                if isinstance(clean_token_final, str):
+                    clean_token_final = clean_token_final.strip().strip('"').strip("'")
+                    if '\\' in clean_token_final:
+                        try:
+                            clean_token_final = clean_token_final.encode().decode('unicode_escape')
+                            logger.info("Successfully decoded escape sequences in token")
+                        except Exception as e:
+                            logger.warning(f"Failed to decode escape sequences: {e}")
+                    token_match = re.search(r'[A-Za-z0-9_\-\.]{59,100}', clean_token_final)
+                    if token_match:
+                        extracted = token_match.group(0)
+                        if extracted != clean_token_final:
+                            logger.info("Extracted token from larger string")
+                            clean_token_final = extracted
+                
+                logger.info(f"Starting bot with token of length: {len(clean_token_final) if clean_token_final else 0}")
+                logger.info("Starting Discord bot using bot.run() method - this will properly initialize the asyncio environment")
+                time.sleep(1)
+                logger.info("Avoiding intents error by using simplified bot.run call")
+                
+                try:
+                    bot.run(clean_token_final)
+                except RuntimeError as e:
+                    if "Timeout context manager" in str(e):
+                        logger.error(f"Timeout context manager error: {e}")
+                        logger.info("Attempting recovery with proper task context")
+                        from timeout_handlers import ensure_proper_startup
+                        @ensure_proper_startup
+                        async def start_bot_proper_context():
+                            await bot.start(clean_token_final)
+                        start_bot_proper_context()
+                    else:
+                        raise
+                logger.info("Bot.run() completed normally - likely due to intentional shutdown")
+                try:
+                    if os.path.exists("bot_running.lock"):
+                        os.remove("bot_running.lock")
+                except Exception as unlock_err:
+                    logger.warning(f"Failed to remove running lock file: {unlock_err}")
+                cleanup()
+                break
+            except discord.errors.HTTPException as e:
+                error_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                error_logger.error(f"HTTP error: {e}")
+                if e.status == 429:
+                    logger.critical(f"Discord rate limit hit: {e} - implementing exponential backoff")
+                    last_error = f"{error_time} - Rate limit error: {e}"
+                    retry_count += 1
+                    time.sleep(min(backoff_time * 2, 300))
+                else:
+                    logger.critical(f"Discord HTTP error: {e}")
+                    last_error = f"{error_time} - HTTP error: {e}"
+                    retry_count += 1
+            except discord.errors.LoginFailure as e:
+                error_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                error_logger.error(f"Authentication failed: {e}")
+                logger.critical(f"Discord login failed (token issue): {e}")
+                try:
+                    with open("refresh_token_cache", "w") as f:
+                        f.write(str(time.time()))
+                    logger.info("Created refresh_token_cache flag to force token refresh")
+                except Exception as write_err:
+                    logger.warning(f"Failed to create token refresh flag: {write_err}")
+                try:
+                    new_token = os.environ.get("DISCORD_TOKEN", "")
+                    if new_token and new_token != clean_token_final:
+                        logger.info("Found new token in environment, will use on next attempt")
+                except Exception:
+                    pass
+                last_error = f"{error_time} - Authentication failed: {e}"
+                retry_count += 1
+                time.sleep(backoff_time)
+            except Exception as e:
+                error_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                if ConnectionClosedError is not None and isinstance(e, ConnectionClosedError):
+                    error_logger.warning(f"ConnectionClosedError: {e}")
+                    logger.warning(f"Websocket connection closed: {e}")
+                    last_error = f"{error_time} - Connection closed: {e}"
+                    time.sleep(3)
+                elif "ConnectionClosed" in str(type(e)) or "ConnectionClosedError" in str(type(e)):
+                    error_logger.warning(f"ConnectionClosed error (string match): {e}")
+                    logger.warning(f"Websocket connection closed (string match): {e}")
+                    last_error = f"{error_time} - Connection closed: {e}"
+                    time.sleep(3)
+                else:
+                    error_logger.error(f"Unexpected error: {e}")
+                    error_logger.error(traceback.format_exc())
+                    logger.critical(f"Unexpected error in bot.run(): {e}", exc_info=True)
+                    last_error = f"{error_time} - Unexpected error: {e}"
+                    retry_count += 1
+            finally:
+                try:
+                    if os.path.exists("bot_running.lock"):
+                        os.remove("bot_running.lock")
+                        logger.info("Removed bot_running.lock in finally block")
+                except Exception as lock_err:
+                    logger.warning(f"Failed to remove lock file in finally: {lock_err}")
+                try:
+                    loop = asyncio.get_event_loop() if asyncio.get_event_loop().is_running() else None
+                    if loop:
+                        tasks = asyncio.all_tasks(loop=loop) if hasattr(asyncio, 'all_tasks') else asyncio.Task.all_tasks(loop=loop)
+                        for task in tasks:
+                            if task != asyncio.current_task(loop=loop):
+                                task.cancel()
+                        logger.debug(f"Waiting for {len(tasks)} tasks to cancel")
+                        try:
+                            pending_tasks = [t for t in tasks if not t.done() and t != asyncio.current_task(loop=loop)]
+                            if pending_tasks:
+                                wait_task = asyncio.gather(*pending_tasks, return_exceptions=True)
+                                loop.run_until_complete(wait_for_safe(wait_task, 2.0))
+                        except (asyncio.CancelledError, asyncio.TimeoutError, Exception) as wait_err:
+                            logger.debug(f"Task cancellation wait completed: {wait_err}")
+                except Exception as task_err:
+                    logger.warning(f"Error during task cleanup: {task_err}")
+                cleanup()
+                if bot_instance_claimed:
+                    try:
+                        release_instance(BOT_PID_FILE)
+                        bot_instance_claimed = False
+                        logger.info("Successfully released bot instance in finally block")
+                    except Exception as e:
+                        logger.error(f"Failed to release instance: {e}")
+            backoff_time = min(backoff_time * 1.5, max_backoff)
+            logger.warning(f"Retry {retry_count} - Waiting {backoff_time:.1f}s before next attempt. Last error: {last_error}")
+            time.sleep(backoff_time)
+        except Exception as outer_e:
+            error_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            error_logger.critical(f"Critical error in restart loop: {outer_e}")
+            error_logger.critical(traceback.format_exc())
+            logger.critical(f"Critical error in bot restart logic: {outer_e}", exc_info=True)
+            if bot_instance_claimed:
+                try:
+                    release_instance(BOT_PID_FILE)
+                    bot_instance_claimed = False
+                except Exception:
+                    pass
+            time.sleep(60)
+    
+if __name__ == "__main__":
+    async def main():
+        keep_alive()  # Start the Flask web server in the background
+        await asyncio.sleep(1)  # Give Flask a moment to initialize
+        if not TOKEN:
+            logger.critical("No valid token found—bot cannot start.")
+            sys.exit(1)
+        clean_token_final = TOKEN.strip().strip('"').strip("'")
+        logger.info(f"Starting bot with token length: {len(clean_token_final)}")
+        await bot.start(clean_token_final)
+    
+    asyncio.run(main())

@@ -1,0 +1,88 @@
+async def process_player_evaluation(channel: discord.DMChannel, user_id: int, bot: commands.Bot):
+    try:
+        logger.info(f"Processing tryout evaluation for user {user_id}")
+        # Ask for the position (cf, lw/rw, cm, gk)
+        await channel.send("**📋 Position Selection:**\nWhat position is the player trying out for? Options: `cf`, `lw/rw`, `cm`, `gk`")
+        pos_msg = await bot.wait_for(
+            'message',
+            check=lambda m: m.author.id == user_id and m.channel == channel,
+            timeout=60.0
+        )
+        position = pos_msg.content.strip().lower()
+        if position not in ['cf', 'lw/rw', 'cm', 'gk']:
+            await channel.send("❌ Invalid position. Please restart the tryout evaluation.")
+            return
+
+        # Ask for skill ratings
+        await channel.send("**🎯 Shooting:**\nRate shooting out of 10:")
+        shoot_msg = await bot.wait_for('message', check=lambda m: m.author.id == user_id and m.channel == channel, timeout=60.0)
+        shooting = int(shoot_msg.content.strip())
+
+        await channel.send("**🔗 Passing:**\nRate passing out of 10:")
+        pass_msg = await bot.wait_for('message', check=lambda m: m.author.id == user_id and m.channel == channel, timeout=60.0)
+        passing = int(pass_msg.content.strip())
+
+        await channel.send("**💨 Dribbling:**\nRate dribbling out of 10:")
+        drib_msg = await bot.wait_for('message', check=lambda m: m.author.id == user_id and m.channel == channel, timeout=60.0)
+        dribbling = int(drib_msg.content.strip())
+
+        await channel.send("**🛡️ Defending:**\nRate defending out of 10:")
+        def_msg = await bot.wait_for('message', check=lambda m: m.author.id == user_id and m.channel == channel, timeout=60.0)
+        defending = int(def_msg.content.strip())
+
+        goalkeeping = None
+        if position == 'gk':
+            await channel.send("**🥅 Goalkeeping:**\nRate goalkeeping out of 10:")
+            gk_msg = await bot.wait_for('message', check=lambda m: m.author.id == user_id and m.channel == channel, timeout=60.0)
+            goalkeeping = int(gk_msg.content.strip())
+
+        # Calculate tryout value based on position and ratings
+        # Define weight dictionaries (example weights)
+        if position == 'cf':
+            weights = {'shooting': 3, 'passing': 1, 'dribbling': 2, 'defending': 1}
+        elif position == 'lw/rw':
+            weights = {'shooting': 2.5, 'dribbling': 3, 'passing': 1, 'defending': 1}
+        elif position == 'cm':
+            weights = {'passing': 3, 'defending': 3, 'shooting': 1, 'dribbling': 1}
+        elif position == 'gk':
+            weights = {'goalkeeping': 3.5, 'passing': 1.5}
+
+        # Compute the raw score and maximum possible score
+        if position == 'gk':
+            raw = goalkeeping * weights.get('goalkeeping', 0) + passing * weights.get('passing', 0)
+            max_raw = 10 * (weights.get('goalkeeping', 0) + weights.get('passing', 0))
+        else:
+            raw = (shooting * weights.get('shooting', 0) +
+                   passing * weights.get('passing', 0) +
+                   dribbling * weights.get('dribbling', 0) +
+                   defending * weights.get('defending', 0))
+            max_raw = 10 * (weights.get('shooting', 0) +
+                            weights.get('passing', 0) +
+                            weights.get('dribbling', 0) +
+                            weights.get('defending', 0))
+        tryout_value = round((raw / max_raw) * 50, 2)  # Value out of 50m
+
+        # Post results in the tryout-results channel
+        tryout_results = discord.utils.get(bot.get_all_channels(), name="📋-tryout-results")
+        if tryout_results:
+            await tryout_results.send(
+                f"**Tryout Results for <@{user_id}>**\n"
+                f"> Position: {position.upper()}\n"
+                f"> Shooting: {shooting}/10\n"
+                f"> Passing: {passing}/10\n"
+                f"> Dribbling: {dribbling}/10\n"
+                f"> Defending: {defending}/10\n" +
+                (f"> Goalkeeping: {goalkeeping}/10\n" if goalkeeping is not None else "") +
+                f"**Calculated Value: ¥{tryout_value}m**"
+            )
+        # Post player's new value in the player-values channel (ping the player)
+        player_values = discord.utils.get(bot.get_all_channels(), name="💸-player-values")
+        if player_values:
+            await player_values.send(f"🎉 Congrats <@{user_id}>! Your tryout value is calculated as ¥{tryout_value}m!")
+        
+        await channel.send("✅ Tryout evaluation processed successfully!")
+        if user_id in active_tryouts:
+            del active_tryouts[user_id]
+    except Exception as e:
+        logger.error(f"Error processing tryout evaluation for user {user_id}: {e}", exc_info=True)
+        await channel.send("❌ An error occurred while processing your tryout evaluation. Please try again.")

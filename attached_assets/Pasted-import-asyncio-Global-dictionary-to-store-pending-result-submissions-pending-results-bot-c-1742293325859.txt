@@ -1,0 +1,147 @@
+import asyncio
+
+# Global dictionary to store pending result submissions
+pending_results = {}
+
+@bot.command(name='matchresult')
+async def match_result(ctx, winning_team: Optional[str] = None):
+    """
+    Report match result with proof for team matches.
+    Usage: !matchresult team1 OR !matchresult team2
+    """
+    try:
+        # Validate argument (accepts "team1", "team2", "team 1", or "team 2")
+        if not winning_team or winning_team.lower() not in ['team1', 'team2', 'team 1', 'team 2']:
+            await ctx.send("❌ Please specify the winning team! Usage: `!matchresult team1` or `!matchresult team2`")
+            return
+        
+        # Find the match the user is in
+        user_match = None
+        for match in active_matches.values():
+            if match.status == "in_progress":
+                if ctx.author.id in [m.id for m in match.team1 + match.team2]:
+                    user_match = match
+                    break
+        if not user_match:
+            await ctx.send("❌ You don't have an active match to report results for!")
+            return
+        
+        # Determine winning and losing teams
+        if winning_team.lower() in ['team1', 'team 1']:
+            winning_team_list = user_match.team1
+            losing_team_list = user_match.team2
+        else:
+            winning_team_list = user_match.team2
+            losing_team_list = user_match.team1
+        
+        # Ask for screenshot proof
+        await ctx.send("Please attach your screenshot proof of the match result within 60 seconds.")
+        def check(m):
+            return m.author == ctx.author and m.attachments and m.channel == ctx.channel
+        try:
+            proof_message = await bot.wait_for('message', check=check, timeout=60.0)
+        except asyncio.TimeoutError:
+            await ctx.send("❌ Timeout. You did not provide proof in time. Canceling match result submission.")
+            return
+        
+        # Build the embed for submission with the screenshot attached
+        embed = discord.Embed(
+            title="Match Result Submission",
+            description=(
+                f"**Match Type:** {user_match.match_type.value}v{user_match.match_type.value}\n"
+                f"**Bet Amount:** ¥{user_match.amount}m\n"
+                f"**Winning Team:** {', '.join(member.mention for member in winning_team_list)}\n"
+                f"**Losing Team:** {', '.join(member.mention for member in losing_team_list)}\n"
+                f"**Submitted by:** {ctx.author.mention}\n\n"
+                "Proof is attached below."
+            ),
+            color=discord.Color.green()
+        )
+        attachment_url = proof_message.attachments[0].url
+        embed.set_image(url=attachment_url)
+        
+        # Get the win-approval channel and send the submission embed there
+        approval_channel = discord.utils.get(ctx.guild.text_channels, name='⚖｜win-approval')
+        if not approval_channel:
+            await ctx.send("❌ Could not find the win-approvals channel! Please contact staff.")
+            return
+        submission_msg = await approval_channel.send(embed=embed)
+        # Add reactions for staff review
+        await submission_msg.add_reaction("✅")
+        await submission_msg.add_reaction("❌")
+        
+        await ctx.send("Match result submitted for staff approval. Please wait for the outcome.")
+        
+        # Save the pending result details for processing when staff react
+        pending_results[submission_msg.id] = {
+            "match": user_match,
+            "winning_team": winning_team_list,
+            "losing_team": losing_team_list,
+            "bet": user_match.amount,
+            "submitted_by": ctx.author,
+            "channel": ctx.channel  # the channel to potentially announce results
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in match result command: {e}", exc_info=True)
+        await ctx.send("An error occurred while handling the match result.")
+
+
+@bot.event
+async def on_reaction_add(reaction, user):
+    if user.bot:
+        return
+
+    try:
+        await activity_tracker.track_reaction(str(user.id))
+        
+        # If the reaction is on a match advertisement, handle match joining as before
+        if reaction.message.embeds and "New Match Available!" in reaction.message.embeds[0].title:
+            for match_id, match_state in active_matches.items():
+                if match_state.creation_message and match_state.creation_message.id == reaction.message.id:
+                    await handle_match_join(reaction, user, match_state)
+                    return
+        
+        # Handle reactions for pending match result submissions
+        if reaction.message.channel.name == '⚖｜win-approval' and reaction.message.id in pending_results:
+            # Only allow staff (those with value management role) to vote
+            if not has_value_management_role(user):
+                await reaction.remove(user)
+                return
+            
+            result_info = pending_results[reaction.message.id]
+            match = result_info["match"]
+            winning_team_list = result_info["winning_team"]
+            losing_team_list = result_info["losing_team"]
+            bet = result_info["bet"]
+            
+            if str(reaction.emoji) == "✅":
+                # Staff approved the result.
+                # Each member of the winning team receives double their wager (their own wager back plus the opponent's wager)
+                for winner in winning_team_list:
+                    current_value = data_manager.get_member_value(str(winner.id))
+                    new_value = current_value + (bet * 2)
+                    data_manager.set_member_value(str(winner.id), new_value)
+                    # Announce in the player values channel
+                    player_values_channel = discord.utils.get(reaction.message.guild.text_channels, name='💸-player-values')
+                    if player_values_channel:
+                        await player_values_channel.send(
+                            f"🎉 Congrats {winner.mention}! You've won {bet * 2}m. Your new value is ¥{new_value}m."
+                        )
+                # Clean up match state for all participants
+                for participant in match.team1 + match.team2:
+                    active_matches.pop(participant.id, None)
+                await reaction.message.channel.send("✅ Match result approved. Winners have been credited.")
+                pending_results.pop(reaction.message.id, None)
+            
+            elif str(reaction.emoji) == "❌":
+                # Staff denied the result; refund all participants their wager
+                for participant in match.team1 + match.team2:
+                    current_value = data_manager.get_member_value(str(participant.id))
+                    new_value = current_value + bet
+                    data_manager.set_member_value(str(participant.id), new_value)
+                await reaction.message.channel.send("❌ Match result denied. All wagers have been refunded.")
+                pending_results.pop(reaction.message.id, None)
+                
+    except Exception as e:
+        logger.error(f"Error handling reaction: {e}", exc_info=True)

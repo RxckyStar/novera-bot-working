@@ -1,0 +1,115 @@
+import logging
+import os
+import discord
+from discord.ext import commands, tasks
+import asyncio
+import time
+from typing import Optional, List
+from config import (
+    TOKEN, COMMAND_PREFIX,
+    DATA_FILE
+)
+from data_manager import DataManager
+from activity_tracker import ActivityTracker
+from utils import (
+    has_value_management_role, parse_member_mention,
+    format_value_message, format_activity_message,
+    format_ranking_message, has_spank_permission,
+    get_random_spank_response, get_random_headpat_response
+)
+
+# Initialize bot with all intents
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.reactions = True
+intents.guilds = True
+
+bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
+data_manager = DataManager(DATA_FILE)
+activity_tracker = ActivityTracker(data_manager)
+
+# Match channel mapping
+MATCH_CHANNELS = {
+    "1v1": 1351037569592328293,
+    "2v2": 1351037618606964849,
+    "3v3": 1351037659455295570,
+    "5v5": 1351037705961607168
+}
+WIN_APPROVAL_CHANNEL = 1351221346192982046
+
+class MatchType:
+    ONETWOONE = "1v1"
+    TWOVTWO = "2v2"
+    THREEVTHREE = "3v3"
+    FIVEVFIVE = "5v5"
+
+class MatchState:
+    def __init__(self, creator: discord.Member):
+        self.creator = creator
+        self.guild = creator.guild
+        self.match_type: Optional[str] = None
+        self.amount: Optional[int] = None
+        self.abilities_enabled: Optional[bool] = None
+        self.roblox_username: Optional[str] = None
+        self.private_server: Optional[str] = None
+        self.region: Optional[str] = None
+        self.opponents: List[discord.Member] = []
+        self.current_step = 0
+        self.creation_message: Optional[discord.Message] = None
+        self.status = "creating"  # can be 'creating', 'in_progress', or 'completed'
+
+active_matches = {}
+
+async def handle_match_creation_step(match_state: MatchState, message: discord.Message):
+    try:
+        if match_state.current_step == 5:  # Private server step
+            content = message.content.lower()
+            match_state.private_server = None if content == 'no' else message.content
+
+            match_channel_id = MATCH_CHANNELS.get(match_state.match_type)
+            if not match_channel_id:
+                await message.channel.send("❌ Match channel not found! Please contact staff.")
+                return
+
+            match_channel = bot.get_channel(match_channel_id)
+            if not match_channel:
+                await message.channel.send("❌ Could not retrieve the match channel! Please contact staff.")
+                return
+
+            embed = discord.Embed(
+                title="🎮 New Match Available!",
+                description=(
+                    f"💫 **Type:** {match_state.match_type}\n"
+                    f"💰 **Bet:** ¥{match_state.amount}m\n"
+                    f"🌍 **Region:** {match_state.region}\n"
+                    f"🎯 **Abilities:** {'✅ Enabled' if match_state.abilities_enabled else '❌ Disabled'}\n"
+                    f"👤 **Host:** {match_state.creator.mention}\n"
+                    f"🎮 **Roblox Username:** {match_state.roblox_username}"
+                ),
+                color=discord.Color.blue()
+            )
+
+            if match_state.private_server:
+                embed.add_field(
+                    name="🔗 Private Server",
+                    value=match_state.private_server,
+                    inline=False
+                )
+
+            match_state.creation_message = await match_channel.send(embed=embed)
+            await match_state.creation_message.add_reaction("✅")
+
+            await message.channel.send(
+                "**✅ Match Created Successfully!**\n\n"
+                f"> Check {match_channel.mention} for your match post\n"
+                "> Players can join by reacting with ✅"
+            )
+    except Exception as e:
+        logging.error(f"Error in match creation step: {e}", exc_info=True)
+        if message.author.id in active_matches:
+            del active_matches[message.author.id]
+        await message.channel.send("❌ An error occurred during match creation. Please try again with !creatematch")
+
+if __name__ == "__main__":
+    bot.run(TOKEN)

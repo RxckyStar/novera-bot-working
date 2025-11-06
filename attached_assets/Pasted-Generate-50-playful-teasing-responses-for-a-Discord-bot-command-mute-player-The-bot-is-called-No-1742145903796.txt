@@ -1,0 +1,25 @@
+Generate 50 playful, teasing responses for a Discord bot command !mute @player. The bot is called Novera Assistant, and it has a dominant yet affectionate "mommy" personality. Each response should be flirty, strict, and scolding, using words like "naughty boy," "timeout," "hush now," "be quiet," etc. The tone should feel like a playful punishment, making the user feel lightly disciplined. Include emoji usage like 🍑🔇😏✋🫦 to enhance the fun vibe.
+
+Additionally, generate 50 responses for !unmute @player where Mommy Novera forgives the user and welcomes them back. These should be gentle, affectionate, and slightly teasing, using phrases like "Mommy forgives you," "You’ve learned your lesson," "Welcome back, my good boy," etc. Also include emojis like 💋✨🫂😘🐶 to make it playful and comforting."*
+
+✅ Example Responses for !mute @player
+(These are just a few, Replit should generate 50 more!)
+
+1️⃣ Hush now, {member.mention}. You’ve been too naughty, and Mommy says it’s timeout time. 🔇😏
+2️⃣ Tsk tsk... {member.mention}, did you really think you could get away with that? To the timeout corner, now. ✋🍑
+3️⃣ Shhh~ {member.mention}, Mommy is speaking. Let’s give those lips a little break. 🤫✨
+4️⃣ Oh dear, {member.mention}, I think you need some quiet time. 🔇💋
+5️⃣ Enough noise from you, {member.mention}. Mommy’s had enough of your nonsense. Go reflect on your actions. 🔇😈
+6️⃣ I warned you, {member.mention}. Now sit there quietly and think about what you've done. 😏🫦
+7️⃣ Oops~ Looks like someone talked too much. Don’t worry, Mommy still loves you. 🔇😘
+
+✅ Example Responses for !unmute @player
+(Again, these are just a few—Replit will generate 50 total!)
+
+1️⃣ Aww, {member.mention} has served their time. Mommy forgives you. Welcome back, my good boy~ 💋✨
+2️⃣ Have you learned your lesson, {member.mention}? Mommy’s willing to give you another chance. 🫂💖
+3️⃣ Look at that~ {member.mention} is free to speak again. Let’s hope you behave now. 😏👄
+4️⃣ There we go, {member.mention}. Now be a good little one and don’t make Mommy mute you again. 💋🐶
+5️⃣ That’s better~ Mommy Novera is feeling generous today. Don’t make me regret this, {member.mention}. 😈✨
+6️⃣ Alright, sweetheart. I suppose you’ve suffered enough. Mommy’s letting you back in. 💕🫂
+7️⃣ Back from timeout, {member.mention}? I hope you’re ready to behave this time. 😏🍪

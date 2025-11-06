@@ -1,0 +1,728 @@
+import os
+import sys
+import logging
+import discord
+from discord.ext import commands, tasks
+import asyncio
+import time
+import math
+import random
+from typing import Optional, List
+from flask import Flask
+import threading
+
+from config import TOKEN, COMMAND_PREFIX, DATA_FILE
+from data_manager import DataManager
+from activity_tracker import ActivityTracker
+from utils import (
+    has_value_management_role, format_ranking_message,
+    has_spank_permission, get_random_spank_response,
+    get_random_headpat_response, get_spank_warning_response
+)
+
+# =============================
+# MOMMY PHRASE VARIANTS WITH EMOJIS
+# =============================
+MOMMY_ERROR_VARIANTS = [
+    "😱 Oh dear, Mommy had a little boo boo! Please try again, sweetie! 😢",
+    "😓 Oopsie, something went awry, my darling! Mommy is on it! 🌈",
+    "😖 Oh no dear, Mommy's system just tripped over a rainbow! Try again, honey! 💕",
+    "😞 Yikes, that didn't go as planned, sweetie! Mommy needs a moment! 😇",
+    "😬 Whoopsie, Mommy encountered a tiny hiccup there! Please forgive me, darling! 😘"
+]
+
+MOMMY_SUCCESS_VARIANTS = [
+    "🎉 Yay, Mommy is so proud of you, darling! Fantastic work! 💖",
+    "👏 Hooray, you've done it, sweetie! Mommy loves your effort! 🌟",
+    "🏆 Bravo, my precious! Mommy is absolutely delighted by your performance! 😍",
+    "✨ Wonderful, darling—Mommy adores your work! Keep shining! 🌈",
+    "💐 Splendid job, sweetheart! Mommy is cheering for you with all her heart! 💝"
+]
+
+MOMMY_PERMISSION_DENIED = [
+    "🚫 Oh dear, you don't have permission for that, my love! Please ask a staff member, darling! 🙅",
+    "❌ Oopsie, you're not allowed to do that, sweetheart! Mommy says no, try again later! 🙇",
+    "🙅 Oh no, darling, that command is off limits for you! Please be patient, sweetie! 🤗",
+    "🛑 Yikes, permission denied, my dear! Mommy is sorry but you can't do that now! 😔",
+    "❎ Oh dear, you lack the required permission, my love! Please check with staff, darling! 🤷"
+]
+
+MOMMY_CHECKVALUE_VARIANTS = [
+    "💖 Darling, your value sparkles at ¥{value} million! Mommy is so proud of you! ✨",
+    "💎 Sweetheart, your value shines at an amazing ¥{value} million—keep dazzling, my star! 🌟",
+    "💰 Oh my, your value stands tall at ¥{value} million! Mommy is over the moon for you! 🎉",
+    "🌈 Bravo, my precious! Your value is a fabulous ¥{value} million. Mommy loves your shine! 😍",
+    "🔥 Darling, you're on fire with a value of ¥{value} million! Keep making Mommy proud! 🥰"
+]
+
+MOMMY_ACTIVITY_VARIANTS = [
+    "🌟 Darling, your activity score is {activity}! Mommy loves your energy! 🔥",
+    "🚀 Sweetheart, you've been super active with a score of {activity}! Mommy is impressed! 💪",
+    "🎊 Oh my, you're buzzing with an activity score of {activity}! Keep it up, my love! 😘",
+    "⚡ Bravo, my precious! Your activity level is {activity}! Mommy is cheering you on! 👏",
+    "🌈 Darling, you're rocking it with an activity score of {activity}! Mommy is so proud! 🎉"
+]
+
+# =============================
+# GLOBAL DICTIONARIES FOR MATCHES & RESULTS
+# =============================
+active_tryouts = {}         # {evaluator_id: {"member": evaluated_member}}
+active_matches = {}         # For match creation flows (keyed by creator id)
+active_matches_by_ad = {}   # {ad_message_id: MatchState} – live matches waiting for team joins
+pending_results = {}        # {creator_id: MatchState} – finished matches pending result submission
+
+# =============================
+# WEB SERVER FOR REPLIT AUTOSCALE
+# =============================
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🌟 Novera Assistant is up and running, darling! 🌟"
+
+def run_webserver():
+    app.run(host="0.0.0.0", port=5000, debug=False)
+
+def keep_alive():
+    """Start the Flask server in a separate thread"""
+    def run():
+        app.run(host='0.0.0.0', port=5000)
+    thread = threading.Thread(target=run)
+    thread.daemon = True
+    thread.start()
+
+# =============================
+# SINGLE INSTANCE CHECK & CLEANUP
+# =============================
+LOCK_FILE = "bot.lock"
+PID_FILE = "bot.pid"
+
+def remove_lock_files():
+    for file in [LOCK_FILE, PID_FILE]:
+        if os.path.exists(file):
+            try:
+                os.remove(file)
+                logging.info(f"Removed {file}")
+            except Exception as e:
+                logging.error(f"Error removing {file}: {e}")
+
+# =============================
+# LOGGING CONFIGURATION
+# =============================
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("bot.log")
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# =============================
+# BOT INITIALIZATION & GLOBALS
+# =============================
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.reactions = True
+intents.guilds = True
+intents.guild_messages = True
+intents.dm_messages = True
+intents.guild_reactions = True
+
+bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
+data_manager = DataManager(DATA_FILE)
+activity_tracker = ActivityTracker(data_manager)
+
+# =============================
+# UTILITY CLASSES
+# =============================
+class PlayerEvaluation:
+    def __init__(self, ratings: dict, feedback: str, is_goalkeeper: bool):
+        self.ratings = ratings
+        self.feedback = feedback
+        self.is_goalkeeper = is_goalkeeper
+
+    def calculate_value(self) -> int:
+        try:
+            if self.is_goalkeeper:
+                weights = {'goalkeeping': 3.5, 'passing': 1.5}
+                ratings = {
+                    'goalkeeping': self.ratings.get('goalkeeping', 0),
+                    'passing': self.ratings.get('passing', 0)
+                }
+                raw = sum(ratings[k] * weights[k] for k in weights)
+                max_raw = sum(10 * weights[k] for k in weights)
+            else:
+                weights = {'shooting': 2.5, 'passing': 1.0, 'dribbling': 1.5, 'defending': 1.0}
+                ratings = {
+                    'shooting': self.ratings.get('shooting', 0),
+                    'passing': self.ratings.get('passing', 0),
+                    'dribbling': self.ratings.get('dribbling', 0),
+                    'defending': self.ratings.get('defending', 0)
+                }
+                raw = sum(ratings[k] * weights[k] for k in weights)
+                max_raw = sum(10 * weights[k] for k in weights)
+            return math.ceil((raw / max_raw) * 50) if max_raw > 0 else 0
+        except Exception as e:
+            logger.error(f"Error calculating value: {e}", exc_info=True)
+            return 0
+
+class MatchType:
+    ONETWOONE = 1   # 1v1
+    TWOVTWO = 2     # 2v2
+    THREEVTHREE = 3 # 3v3
+    FIVEVFIVE = 5   # 5v5
+
+class MatchState:
+    def __init__(self, creator: discord.Member):
+        self.creator = creator
+        self.guild = creator.guild
+        self.match_type: Optional[int] = None
+        self.amount: Optional[int] = None
+        self.region: Optional[str] = None
+        self.roblox_username: Optional[str] = None
+        self.private_server: Optional[str] = None
+        self.team1: List[discord.Member] = []
+        self.team2: List[discord.Member] = []
+        self.current_step = 0
+        self.creation_message: Optional[discord.Message] = None
+        self.status = "creating"
+
+    def is_full(self) -> bool:
+        return len(self.team1) >= self.match_type and len(self.team2) >= self.match_type
+
+    def add_player(self, player: discord.Member, team_num: int):
+        if team_num == 1 and player not in self.team1:
+            self.team1.append(player)
+            logger.info(f"Added {player.id} to Team 1")
+        elif team_num == 2 and player not in self.team2:
+            self.team2.append(player)
+            logger.info(f"Added {player.id} to Team 2")
+
+# =============================
+# MATCH CREATION FLOW - PROCESS DM STEPS
+# =============================
+async def process_match_creation_step(match_state: MatchState, message: discord.Message):
+    content = message.content.strip()
+    if match_state.current_step == 0:
+        if content not in ['1', '2', '3', '5']:
+            await message.channel.send("❌ Oh dear, darling, please choose a valid match type: 1, 2, 3, or 5! Mommy needs your proper input, sweetie! 😇")
+            return
+        match_state.match_type = int(content)
+        match_state.current_step += 1
+        await message.channel.send("💰 Alright, sweetie, now please enter your wager amount (minimum 5m) so Mommy knows your stake! 💸")
+    elif match_state.current_step == 1:
+        try:
+            wager = int(content)
+            if wager < 5:
+                await message.channel.send("❌ Oh my, the minimum wager is 5m, darling! Please enter a valid amount for Mommy! 💖")
+                return
+            match_state.amount = wager
+            match_state.current_step += 1
+            await message.channel.send("🌍 Now, sweetie, please select your region: Type 'NA' for North America or 'EU' for Europe! 🌎")
+        except ValueError:
+            await message.channel.send("❌ Oopsie, darling! Please enter a proper number for your wager amount! 🔢")
+    elif match_state.current_step == 2:
+        if content.upper() not in ['NA', 'EU']:
+            await message.channel.send("❌ Oh dear, please type 'NA' or 'EU' for the region, sweetie! 🙏")
+            return
+        match_state.region = content.upper()
+        match_state.current_step += 1
+        await message.channel.send("👤 Lovely, now please enter your Roblox username, darling! 🤩")
+    elif match_state.current_step == 3:
+        if not content:
+            await message.channel.send("❌ Oh no, sweetie! Please provide a valid Roblox username for Mommy! 😢")
+            return
+        match_state.roblox_username = content
+        match_state.current_step += 1
+        await message.channel.send("🔗 Great, darling! Do you have a private server link? Type 'skip' to skip or paste your link, sweetie! 📎")
+    elif match_state.current_step == 4:
+        if content.lower() == "skip":
+            match_state.private_server = None
+        else:
+            match_state.private_server = content
+        match_state.current_step += 1
+        channel_mapping = {
+            1: "⚔-1v1-duels",
+            2: "🤝-2v2-battles",
+            3: "💨-3v3-showdowns",
+            5: "🏆-5v5-warzone"
+        }
+        channel_name = channel_mapping.get(match_state.match_type)
+        ad_channel = discord.utils.get(match_state.guild.text_channels, name=channel_name)
+        if not ad_channel:
+            await message.channel.send("❌ Oh dear, Mommy couldn't find the match advertisement channel! Please contact the staff, sweetie! 📞")
+            return
+        embed = discord.Embed(
+            title="🎮 New Match Available!",
+            description=(
+                f"**Match Type:** {match_state.match_type}v{match_state.match_type}\n"
+                f"**Wager:** ¥{match_state.amount}m\n"
+                f"**Region:** {match_state.region}\n"
+                f"**Roblox Username:** {match_state.roblox_username}"
+            ),
+            color=discord.Color.blue()
+        )
+        if match_state.private_server:
+            embed.add_field(name="🔗 Private Server", value=match_state.private_server, inline=False)
+        ad_message = await ad_channel.send(embed=embed)
+        match_state.creation_message = ad_message
+        if match_state.match_type == 1:
+            await ad_message.add_reaction("2️⃣")
+        else:
+            await ad_message.add_reaction("1️⃣")
+            await ad_message.add_reaction("2️⃣")
+        match_state.team1.append(match_state.creator)
+        await message.channel.send("✅ Darling, your match has been created! Check the ad channel for the juicy details!")
+        if message.author.id in active_matches:
+            del active_matches[match_state.creator.id]
+        active_matches_by_ad[ad_message.id] = match_state
+    else:
+        await message.channel.send("❌ Oh no, a little boo boo occurred in match creation. Please try again, sweetie! 😭")
+
+# =============================
+# ON_REACTION_ADD EVENT HANDLER FOR MATCH JOINING
+# =============================
+@bot.event
+async def on_reaction_add(reaction, user):
+    if user.bot:
+        return
+    message = reaction.message
+    if message.id in active_matches_by_ad:
+        match_state = active_matches_by_ad[message.id]
+        if match_state.match_type == 1:
+            if reaction.emoji == "2️⃣":
+                if user in match_state.team1 or user in match_state.team2:
+                    return
+                match_state.team2.append(user)
+                await message.channel.send(f"{user.mention} joined Team 2!")
+        else:
+            if reaction.emoji == "1️⃣":
+                if user in match_state.team1 or user in match_state.team2:
+                    return
+                match_state.team1.append(user)
+                await message.channel.send(f"{user.mention} joined Team 1!")
+            elif reaction.emoji == "2️⃣":
+                if user in match_state.team1 or user in match_state.team2:
+                    return
+                match_state.team2.append(user)
+                await message.channel.send(f"{user.mention} joined Team 2!")
+        if match_state.is_full():
+            details = (
+                f"**Match Details:**\n"
+                f"Match Type: {match_state.match_type}v{match_state.match_type}\n"
+                f"Wager: ¥{match_state.amount} million\n"
+                f"Region: {match_state.region}\n"
+                f"Creator's Roblox Username: {match_state.roblox_username}\n"
+            )
+            if match_state.private_server:
+                details += f"Private Server: {match_state.private_server}\n"
+            for participant in match_state.team1 + match_state.team2:
+                try:
+                    dm_channel = await participant.create_dm()
+                    await dm_channel.send(
+                        f"Hello gorgeous, your match is set and sizzling hot!\n\n{details}\n"
+                        "When the match is over, use `!matchresults` to report your result. Mommy will guide you through the rest!"
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending DM to {participant.id}: {e}", exc_info=True)
+            try:
+                await message.delete()
+            except Exception as e:
+                logger.error(f"Error deleting match ad: {e}", exc_info=True)
+            await message.channel.send(
+                "✨ Oh, my dazzling Novarians, your match is set and steamy! Check your DMs for all the tantalizing details, and once you're done, use `!matchresults` to report your result. Mommy can't wait to hear all about it!"
+            )
+            pending_results[match_state.creator.id] = match_state
+            del active_matches_by_ad[message.id]
+
+# =============================
+# MATCH RESULTS COMMAND – INTERACTIVE DM FLOW
+# =============================
+@bot.command(name='matchresults')
+async def match_results(ctx):
+    try:
+        if ctx.author.id not in pending_results:
+            await ctx.send("❌ Darling, you have no pending match results to submit!")
+            return
+        match_state = pending_results[ctx.author.id]
+        dm_channel = await ctx.author.create_dm()
+        # Improved prompt message
+        prompt = (
+            "💖 Hello, my dazzling match creator! Mommy is ready to process your match result.\n\n"
+            "Please tell me: Which team won the match? Type '1' for Team 1 or '2' for Team 2.\n"
+            "Once you decide, I'll ask for a screenshot URL as proof. Take your time—Mommy wants everything to be perfect!"
+        )
+        await dm_channel.send(prompt)
+        def check_team(m):
+            return m.author.id == ctx.author.id and m.channel == dm_channel and m.content in ['1', '2']
+        try:
+            team_response = await bot.wait_for('message', check=check_team, timeout=60)
+        except asyncio.TimeoutError:
+            await dm_channel.send("❌ Darling, you took too long to respond. Please start the match result submission again.")
+            return
+        winning_team = int(team_response.content)
+        await dm_channel.send(
+            "Now, my love, please send me the proof of the match result—a clear screenshot URL, please!\n"
+            "Make sure it's crystal clear, darling!"
+        )
+        def check_proof(m):
+            return m.author.id == ctx.author.id and m.channel == dm_channel and m.content.startswith("http")
+        try:
+            proof_msg = await bot.wait_for('message', check=check_proof, timeout=120)
+        except asyncio.TimeoutError:
+            await dm_channel.send("❌ Darling, you took too long to provide proof. Please try again when you're ready.")
+            return
+        proof = proof_msg.content
+
+        details = (
+            f"**Match Type:** {match_state.match_type}v{match_state.match_type}\n"
+            f"**Wager:** ¥{match_state.amount} million\n"
+            f"**Region:** {match_state.region}\n"
+            f"**Creator's Roblox Username:** {match_state.roblox_username}\n"
+        )
+        if match_state.private_server:
+            details += f"**Private Server:** {match_state.private_server}\n"
+        teams_text = "Team 1: " + ", ".join([member.mention for member in match_state.team1]) + "\n"
+        teams_text += "Team 2: " + ", ".join([member.mention for member in match_state.team2])
+        
+        embed = discord.Embed(
+            title="Match Result Submission",
+            description=(
+                f"**Submitted by:** {ctx.author.mention}\n"
+                f"**Winning Team:** {'Team 1' if winning_team == 1 else 'Team 2'}\n"
+                f"**Proof:** {proof}\n\n"
+                f"{details}\n"
+                f"{teams_text}"
+            ),
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text="Staff, please react with ✅ to approve or ❌ to decline this match result.")
+        
+        win_channel = discord.utils.get(ctx.guild.text_channels, name="⚖｜win-approval")
+        if not win_channel:
+            await ctx.send("❌ Oh dear, I can't find the win-approval channel! Please contact a staff member, darling!")
+            return
+        submission = await win_channel.send(embed=embed)
+        await submission.add_reaction("✅")
+        await submission.add_reaction("❌")
+        await dm_channel.send("✅ Darling, your match result submission has been sent for approval! Mommy will keep you posted.")
+
+        # Wait for a staff reaction (3 days timeout)
+        def reaction_check(reaction, user):
+            return (not user.bot) and str(reaction.emoji) in ["✅", "❌"] and reaction.message.id == submission.id
+        try:
+            reaction, staff_user = await bot.wait_for('reaction_add', timeout=259200, check=reaction_check)
+        except asyncio.TimeoutError:
+            await dm_channel.send("❌ Oh dear, no staff reacted in time. Please contact a staff member directly, sweetie!")
+            return
+
+        # DM variants for winners and losers, and for declines.
+        winners_dm_variants = [
+            "🎉 Congratulations, darling! Your win has boosted your value to ¥{new_val} million. Mommy is over the moon!",
+            "👏 Well done, sweetie! Your victory has increased your worth to ¥{new_val} million. Shine on, my star!",
+            "🏆 Bravo, my champion! Your win now makes you worth ¥{new_val} million. Mommy celebrates your success!",
+            "✨ You did it, love! Your winning streak has lifted your value to ¥{new_val} million. Mommy is thrilled!",
+            "💐 Oh, my victorious Novarian, your triumph has elevated your value to ¥{new_val} million. Keep dazzling!"
+        ]
+        losers_dm_variants = [
+            "😢 Oh no, darling, a loss means your value now dips to ¥{new_val} million. Mommy knows you'll bounce back!",
+            "💔 Tough match, sweetie. Your value is now ¥{new_val} million. Every champion faces setbacks—rise again!",
+            "😞 A loss stings, but it's only temporary. Your value has been adjusted to ¥{new_val} million. Mommy believes in you!",
+            "🥀 Oh dear, not the result you hoped for. Your value now sits at ¥{new_val} million. Remember, darling, every setback is a setup for a comeback!",
+            "🌧️ Tough break, sweetie. Your value has dropped to ¥{new_val} million. Mommy is here to support you—keep your head high!"
+        ]
+        declined_dm_variants = [
+            "❌ Darling, your match result submission was declined by staff. No changes have been made to your value. Please contact a staff member for more details.",
+            "🚫 Oh dear, the result submission didn't pass, sweetie. Your wagers have been refunded. Mommy advises you to double-check next time!",
+            "😔 Sorry, love, but staff rejected the result. Your value remains unchanged, and all wagers are refunded. Reach out if you have questions.",
+            "🙅‍♀️ Darling, the submission was declined. Your match result wasn't approved, and everything is back to normal. Mommy is here if you need help!",
+            "🛑 Oops, sweetie, staff didn't approve your result submission. No adjustments were made, and your wager has been returned. Please consult a staff member for assistance."
+        ]
+        
+        if str(reaction.emoji) == "✅":
+            # Update values: winners gain wager, losers lose wager.
+            for member in match_state.team1:
+                old_val = data_manager.get_member_value(str(member.id))
+                if winning_team == 1:
+                    new_val = old_val + match_state.amount
+                else:
+                    new_val = old_val - match_state.amount
+                data_manager.set_member_value(str(member.id), new_val)
+                # Ping in 💸-player-values
+                player_values_channel = discord.utils.get(ctx.guild.text_channels, name="💸-player-values")
+                if player_values_channel:
+                    await player_values_channel.send(f"{member.mention}, your updated value is now ¥{new_val} million!")
+                # DM winner/loser
+                dm = await member.create_dm()
+                if winning_team == 1:
+                    dm_message = random.choice(winners_dm_variants).format(new_val=new_val)
+                else:
+                    dm_message = random.choice(losers_dm_variants).format(new_val=new_val)
+                await dm.send(dm_message)
+            for member in match_state.team2:
+                old_val = data_manager.get_member_value(str(member.id))
+                if winning_team == 2:
+                    new_val = old_val + match_state.amount
+                else:
+                    new_val = old_val - match_state.amount
+                data_manager.set_member_value(str(member.id), new_val)
+                player_values_channel = discord.utils.get(ctx.guild.text_channels, name="💸-player-values")
+                if player_values_channel:
+                    await player_values_channel.send(f"{member.mention}, your updated value is now ¥{new_val} million!")
+                dm = await member.create_dm()
+                if winning_team == 2:
+                    dm_message = random.choice(winners_dm_variants).format(new_val=new_val)
+                else:
+                    dm_message = random.choice(losers_dm_variants).format(new_val=new_val)
+                await dm.send(dm_message)
+            await win_channel.send("🎉 Staff approved the match result! Wager values have been updated accordingly!")
+            await dm_channel.send("🎉 Darling, your match result was approved! Mommy is proud of your victory!")
+        else:
+            # Declined: refund wagers and DM all participants.
+            await win_channel.send("❌ Staff rejected the match result submission. All wagers have been refunded.")
+            for participant in match_state.team1 + match_state.team2:
+                dm = await participant.create_dm()
+                dm_message = random.choice(declined_dm_variants)
+                await dm.send(dm_message)
+            await dm_channel.send("❌ Darling, your match result submission was declined. All wagers have been refunded. Please contact staff for further details.")
+        del pending_results[ctx.author.id]
+    except Exception as e:
+        logger.error(f"Error in matchresults command: {e}", exc_info=True)
+        await ctx.send(random.choice(MOMMY_ERROR_VARIANTS))
+
+@bot.command(name='matchresult')
+async def match_result(ctx, winning_team: Optional[str] = None):
+    try:
+        await ctx.send("⏳ Darling, match result submission is now handled via `!matchresults`. Please use that command to report your match outcome!")
+    except Exception as e:
+        logger.error(f"Error in matchresult command: {e}", exc_info=True)
+        await ctx.send(random.choice(MOMMY_ERROR_VARIANTS))
+
+@bot.command(name='giveaway')
+async def giveaway_cmd(ctx, duration: str):
+    try:
+        unit = duration[-1].lower()
+        if unit not in ['s', 'm', 'h', 'd']:
+            await ctx.send("❌ Oh dear, please use a valid time unit: s (seconds), m (minutes), h (hours) or d (days), sweetie! ⏰")
+            return
+        try:
+            time_val = int(duration[:-1])
+        except ValueError:
+            await ctx.send("❌ Oopsie, darling! I couldn't understand the duration number. Please try again! 🔢")
+            return
+
+        if unit == 's':
+            total_seconds = time_val
+        elif unit == 'm':
+            total_seconds = time_val * 60
+        elif unit == 'h':
+            total_seconds = time_val * 3600
+        elif unit == 'd':
+            total_seconds = time_val * 86400
+
+        giveaway_channel = discord.utils.get(ctx.guild.text_channels, name="🎁-giveaways")
+        if not giveaway_channel:
+            await ctx.send("❌ Oh dear, I can't find the '🎁-giveaways' channel! Please create one, sweetie! 📣")
+            return
+
+        embed = discord.Embed(
+            title="🎉 Giveaway Time, Sweethearts!",
+            description=(
+                f"Hello, my precious Novarians! Mommy is hosting a giveaway!\n"
+                f"React with 🎉 to join the fun and stand a chance to win!\n"
+                f"This delightful giveaway ends in **{duration}**.\n\n"
+                "Don't miss out—show your excitement and join in, darling! 💖"
+            ),
+            color=discord.Color.purple()
+        )
+        embed.set_footer(text="Good luck, my dears!")
+        
+        giveaway_message = await giveaway_channel.send(embed=embed)
+        await giveaway_message.add_reaction("🎉")
+        await ctx.send(f"✅ Darling, the giveaway has started in {giveaway_channel.mention} and will last for {duration}! {random.choice(MOMMY_SUCCESS_VARIANTS)}")
+        await asyncio.sleep(total_seconds)
+        updated_message = await giveaway_channel.fetch_message(giveaway_message.id)
+        reaction = discord.utils.get(updated_message.reactions, emoji="🎉")
+        if reaction is None:
+            await giveaway_channel.send("Oh dear, no one reacted to this giveaway. Mommy is a little disappointed, sweetie! 😔")
+            return
+
+        users = await reaction.users().flatten()
+        entrants = [user for user in users if not user.bot]
+        if not entrants:
+            await giveaway_channel.send("Oh dear, it seems no one joined the giveaway. Maybe next time, sweethearts! 🙏")
+            return
+
+        winner = random.choice(entrants)
+        await giveaway_channel.send(f"🎉 Congratulations, {winner.mention}! You are Mommy's lucky winner! Enjoy your prize, darling! {random.choice(MOMMY_SUCCESS_VARIANTS)}")
+    except Exception as e:
+        logger.error(f"Error in giveaway command: {e}", exc_info=True)
+        await ctx.send(random.choice(MOMMY_ERROR_VARIANTS))
+
+@bot.command(name='rankings')
+async def rankings_cmd(ctx):
+    try:
+        all_values = data_manager.get_all_member_values()
+        if not all_values:
+            await ctx.send("Oh dear, no values found yet! Mommy needs more Novarians to shine, sweetie! ✨")
+            return
+
+        sorted_by_value = sorted(all_values.items(), key=lambda x: x[1], reverse=True)
+        top_three = sorted_by_value[:3]
+        growth_data = data_manager.get_value_growth_3days()
+        trending_member_id = None
+        if growth_data:
+            trending_member_id, _ = max(growth_data.items(), key=lambda x: x[1])
+        else:
+            trending_member_id = sorted_by_value[0][0] if sorted_by_value else None
+
+        mommy_success_variants_local = [
+            "Mmm~ let's see which of my precious Novarians are shining the brightest! 💖",
+            "Aww, gather around, my darlings! Mommy’s about to reveal the top stars! ✨",
+            "Alright, my sweet ones, let Mommy show you who's on top! 🎉",
+            "Oh my, time for Mommy’s big reveal of the best Novarians! 👑",
+            "Mmm, let's see which of you little champions is making Mommy proud! 🌟"
+        ]
+
+        embed = discord.Embed(
+            title="🏆 Novera Rankings",
+            description="Here are the top Novarians according to Mommy's records!",
+            color=discord.Color.gold()
+        )
+        rank_emojis = ["🥇", "🥈", "🥉"]
+        for i, (member_id, value) in enumerate(top_three):
+            member_obj = ctx.guild.get_member(int(member_id))
+            if member_obj:
+                embed.add_field(name=f"{rank_emojis[i]} Rank {i+1}", value=f"{member_obj.mention} – ¥{value} million", inline=False)
+        if trending_member_id:
+            trending_member = ctx.guild.get_member(int(trending_member_id))
+            if trending_member:
+                embed.set_footer(text=f"🌟 Trending: {trending_member.display_name}")
+
+        await ctx.send(random.choice(mommy_success_variants_local))
+        await ctx.send(embed=embed)
+
+        rank1_role = discord.utils.get(ctx.guild.roles, name="🥇 Rank1")
+        rank2_role = discord.utils.get(ctx.guild.roles, name="🥈 Rank 2")
+        rank3_role = discord.utils.get(ctx.guild.roles, name="🥉 Rank 3")
+        trending_role = discord.utils.get(ctx.guild.roles, name="🌟TRENDING")
+        for member in ctx.guild.members:
+            for role in [rank1_role, rank2_role, rank3_role, trending_role]:
+                if role and role in member.roles:
+                    try:
+                        await member.remove_roles(role)
+                    except Exception:
+                        pass
+        if len(top_three) >= 1 and rank1_role:
+            mem_obj = ctx.guild.get_member(int(top_three[0][0]))
+            if mem_obj:
+                await mem_obj.add_roles(rank1_role)
+        if len(top_three) >= 2 and rank2_role:
+            mem_obj = ctx.guild.get_member(int(top_three[1][0]))
+            if mem_obj:
+                await mem_obj.add_roles(rank2_role)
+        if len(top_three) >= 3 and rank3_role:
+            mem_obj = ctx.guild.get_member(int(top_three[2][0]))
+            if mem_obj:
+                await mem_obj.add_roles(rank3_role)
+        if trending_member_id and trending_role:
+            trending_mem = ctx.guild.get_member(int(trending_member_id))
+            if trending_mem:
+                await trending_mem.add_roles(trending_role)
+
+    except Exception as e:
+        logger.error(f"Error in rankings command: {e}", exc_info=True)
+        await ctx.send(random.choice(MOMMY_ERROR_VARIANTS))
+
+@bot.command(name="mommy")
+async def mommy_help(ctx):
+    help_text = (
+        "💖 **Hello, my sweet Novarian! I'm Novera Assistant—your ever-loving, sassy Mommy!** 💖\n\n"
+        "**Public Commands:**\n"
+        "• **!checkvalue [@member]** – Peek at your current value, darling.\n"
+        "• **!activity [@member]** – See how active you (or your friends) have been, sweetie.\n"
+        "• **!creatematch** – Create a match advertisement. Show the world your skills!\n"
+        "• **!matchcancel** – Cancel your current match setup if you change your mind.\n"
+        "• **!matchresults** – Report your match result via DM. Mommy will ask which team won and for your screenshot proof—then staff will review it.\n"
+        "• **!giveaway <duration>** – Host a fabulous giveaway (duration: s, m, h, or d).\n"
+        "• **!rankings** – See the top Novarians shining bright!\n\n"
+        "Remember, my precious, Mommy is always here to guide you with love and playful discipline. Now go out there and dazzle the world! 💖"
+    )
+    await ctx.send(help_text)
+
+@bot.event
+async def on_message(message):
+    try:
+        if message.author.bot:
+            return
+        logger.debug(f"Processing message from {message.author} in {message.channel}: {message.content}")
+        await activity_tracker.track_message(str(message.author.id))
+        if isinstance(message.channel, discord.DMChannel) and message.author.id in active_matches:
+            try:
+                match_state = active_matches[message.author.id]
+                await process_match_creation_step(match_state, message)
+            except Exception as e:
+                logger.error(f"Error processing match creation step: {e}", exc_info=True)
+                await message.channel.send(random.choice(MOMMY_ERROR_VARIANTS))
+        await bot.process_commands(message)
+    except Exception as e:
+        logger.error(f"Error in on_message event: {e}", exc_info=True)
+
+@bot.event
+async def on_member_join(member):
+    try:
+        welcome_channel = discord.utils.get(member.guild.text_channels, name="welcome-to-novera")
+        if welcome_channel:
+            welcome_messages = [
+                "💞 Welcome, my precious Novarian, <@{member_id}>! Mommy is so proud to have you here!",
+                "💖 Aww, look who just joined! Welcome, <@{member_id}>! Let's make some magic together, darling!",
+                "✨ Oh, my sweet Novarian <@{member_id}>, welcome to Novera! Mommy is excited to see you shine!",
+                "🌟 Greetings, darling <@{member_id}>! You are now part of the Novera family—time to show your brilliance!",
+                "💐 Hello, lovely <@{member_id}>! Welcome to Novera, where every Novarian is cherished, sweetie!"
+            ]
+            msg = random.choice(welcome_messages).format(member_id=member.id)
+            await welcome_channel.send(msg)
+    except Exception as e:
+        logger.error(f"Error in on_member_join: {e}", exc_info=True)
+
+def cleanup():
+    try:
+        remove_lock_files()
+        logger.info("Cleanup completed successfully, darling!")
+    except Exception as e:
+        logger.error(f"Error during cleanup: {e}")
+
+def keep_alive_and_run_bot():
+    try:
+        if os.path.exists(LOCK_FILE):
+            with open(LOCK_FILE, 'r') as f:
+                old_pid = int(f.read().strip())
+                try:
+                    os.kill(old_pid, 0)
+                    logger.error(f"Bot already running with PID {old_pid}")
+                    sys.exit(1)
+                except OSError:
+                    logger.info(f"Removing stale lock file for PID {old_pid}")
+                    remove_lock_files()
+        with open(LOCK_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+        keep_alive()
+        logger.info("Flask web server started on port 5000, darling!")
+        try:
+            bot.run(TOKEN)
+        except Exception as e:
+            logger.critical(f"Bot crashed: {e}", exc_info=True)
+            cleanup()
+            sys.exit(1)
+        finally:
+            cleanup()
+    except Exception as e:
+        logger.critical(f"Failed to start bot: {e}", exc_info=True)
+        cleanup()
+        sys.exit(1)
+
+if __name__ == "__main__":
+    keep_alive_and_run_bot()

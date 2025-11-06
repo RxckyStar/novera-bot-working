@@ -1,0 +1,108 @@
+import os
+import sys
+import logging
+import discord
+from discord.ext import commands, tasks
+import asyncio
+import time
+import random
+import re
+import psutil
+from flask import Flask, jsonify
+import threading
+import atexit
+import signal
+from datetime import datetime, timedelta
+import json
+import subprocess
+import traceback
+
+# (Other imports and module setups remain unchanged)
+
+# =============================
+# 1. Configure Bot Intents BEFORE creating the bot
+# =============================
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.reactions = True
+intents.guilds = True
+intents.guild_messages = True
+intents.dm_messages = True
+intents.guild_reactions = True
+
+# =============================
+# 2. Create your Bot class (NovaBot) with the intents passed at creation
+# =============================
+class NovaBot(commands.Bot):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.command_tree = self.tree  # Keep a reference to the command tree for syncing
+
+    async def setup_hook(self):
+        logger.info("Setting up slash commands...")
+        try:
+            from timeout_handlers import safe_task, wrap_all_async_operations
+            # Enhance critical bot methods with proper task context handling.
+            wrap_all_async_operations(self)
+            logger.info("Enhanced bot methods with proper task context handling")
+        except Exception as wrapper_err:
+            logger.warning(f"Task context enhancement failed: {wrapper_err}")
+        await super().setup_hook()
+
+# Create bot with configured intents (DO NOT modify intents later)
+bot = NovaBot(command_prefix=COMMAND_PREFIX, intents=intents, case_insensitive=True)
+logger.info(f"Bot created successfully with prefix: {COMMAND_PREFIX}")
+
+# Initialize other components
+data_manager = DataManager(DATA_FILE)
+activity_tracker = ActivityTracker(data_manager)
+logger.setLevel(logging.DEBUG)
+logger.debug(f"Bot initialization with process ID: {os.getpid()}")
+
+# Attach data_manager to bot to avoid circular imports elsewhere
+bot.data_manager = data_manager
+
+@bot.event
+async def on_ready():
+    # (Your existing on_ready event handler code goes here)
+    logger.info(f"Bot is ready as {bot.user} (ID: {bot.user.id})")
+    # ... rest of on_ready ...
+
+# (All other events, commands, and functions remain unchanged)
+
+# =============================
+# 3. Define a function to start your Flask web server for Replit's autoscale
+# =============================
+def keep_alive():
+    def run():
+        app.run(host='0.0.0.0', port=5001)
+    thread = threading.Thread(target=run)
+    thread.daemon = True
+    thread.start()
+
+# =============================
+# 4. New Bot Entry Point Using asyncio.run(main())
+# =============================
+if __name__ == "__main__":
+    async def main():
+         # Start the Flask web server (this runs in a background thread)
+         keep_alive()
+         # Give Flask a moment to initialize
+         await asyncio.sleep(1)
+         
+         # Ensure TOKEN is valid; TOKEN was set earlier using your enhanced token handling
+         if not TOKEN:
+             logger.critical("No valid token found—bot cannot start.")
+             sys.exit(1)
+         
+         # Clean token: remove whitespace and any extraneous quotes.
+         clean_token_final = TOKEN.strip().strip('"').strip("'")
+         # (Add any additional token processing here if needed)
+         logger.info(f"Starting bot with token length: {len(clean_token_final)}")
+         
+         # Start the bot within the proper asyncio context.
+         await bot.start(clean_token_final)
+    
+    # Run the main() coroutine, ensuring all async operations run in an active task.
+    asyncio.run(main())

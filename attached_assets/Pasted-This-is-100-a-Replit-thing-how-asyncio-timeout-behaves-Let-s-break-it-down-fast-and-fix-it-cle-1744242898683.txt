@@ -1,0 +1,72 @@
+import asyncio
+import async_timeout
+from contextlib import asynccontextmanager
+import discord
+from discord.ext import commands
+
+# --------------------------
+# 1. Configure Intents Properly
+# --------------------------
+# Define the intents you need BEFORE creating the Bot.
+intents = discord.Intents.default()
+intents.message_content = True  # Adjust as necessary
+
+# Create the Bot instance with the intents set during instantiation.
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# --------------------------
+# 2. Define a safe_timeout helper
+# --------------------------
+@asynccontextmanager
+async def safe_timeout(timeout_seconds):
+    """
+    A task-safe timeout context manager.
+    Ensures that timeout operations are run inside an asyncio Task.
+    """
+    try:
+        # Check if we're inside a task
+        asyncio.current_task()
+        # For Python 3.11+; if you're using an older version, adjust accordingly.
+        async with async_timeout.timeout(timeout_seconds):
+            yield
+    except RuntimeError:
+        # Not running in a task—wrap the operation in one.
+        loop = asyncio.get_event_loop()
+        async def runner():
+            async with async_timeout.timeout(timeout_seconds):
+                # Replace asyncio.sleep with the actual coroutine if needed.
+                return await asyncio.sleep(timeout_seconds)
+        await loop.create_task(runner())
+        yield
+
+# --------------------------
+# 3. Set up Bot Event Handlers
+# --------------------------
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+
+# Example command or other code that might use safe_timeout:
+@bot.command()
+async def longtask(ctx):
+    try:
+        async with safe_timeout(10):
+            # Simulate long task; replace with your operation.
+            await asyncio.sleep(5)
+            await ctx.send("Long task completed!")
+    except asyncio.TimeoutError:
+        await ctx.send("Operation timed out!")
+
+# --------------------------
+# 4. Define the main entry point that starts the bot
+# --------------------------
+async def main():
+    # You can include any startup routines here inside safe_timeout if needed.
+    async with safe_timeout(30):  # For example, a startup timeout check.
+        await bot.start("YOUR_BOT_TOKEN_HERE")  # Replace with your actual bot token.
+
+# --------------------------
+# 5. Run the bot (ensuring all async code runs inside a task)
+# --------------------------
+if __name__ == "__main__":
+    asyncio.run(main())

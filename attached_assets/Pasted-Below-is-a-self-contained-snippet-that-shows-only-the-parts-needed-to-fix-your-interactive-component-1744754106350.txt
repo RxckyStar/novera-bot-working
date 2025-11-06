@@ -1,0 +1,90 @@
+Below is a self‑contained snippet that shows only the parts needed to fix your interactive components (the Ticket Modal and the Welcome Message with buttons) using the original modal.callback approach. You can copy and paste these portions into your existing 4‑k code—just make sure the snippet is placed after the bot is created (i.e. after you initialize your bot with the proper intents) so that the command and event decorators work properly.
+
+Ticket Modal (Using modal.callback)
+python
+Copy
+
+import discord
+from discord import ui
+
+# This is your original modal implementation that uses modal.callback
+class TicketModal(discord.ui.Modal):
+    def __init__(self):
+        super().__init__(title="Open a Ticket")
+        # Create a text input field for describing the issue
+        self.add_item(discord.ui.TextInput(
+            label="Describe your issue",
+            custom_id="issue_input",
+            style=discord.TextStyle.long,
+            placeholder="Enter the details of your issue...",
+            required=True
+        ))
+
+    async def callback(self, interaction: discord.Interaction):
+        # Capture the text input's value
+        issue_description = self.children[0].value
+        # Here you can add any logic you need (for example, creating a ticket channel)
+        await interaction.response.send_message(
+            f"Ticket created with issue: {issue_description}", 
+            ephemeral=True
+        )
+        # Log the event or perform additional processing as required
+        # For example: self.update_completion_status() if it exists in your context
+
+# Register a slash command (or traditional command, if you like) that sends the modal
+@bot.slash_command(name="ticket", description="Open a support ticket")
+async def ticket(interaction: discord.Interaction):
+    modal = TicketModal()
+    await interaction.response.send_modal(modal)
+Welcome Message with Button (Interactive View)
+python
+Copy
+
+import discord
+from discord import ui
+
+# Define an interactive view with a button that works on Discord.py v2.x
+class WelcomeView(discord.ui.View):
+    @discord.ui.button(label="Get Started", style=discord.ButtonStyle.primary, custom_id="welcome_get_started")
+    async def get_started(self, button: discord.ui.Button, interaction: discord.Interaction):
+        # When a new member clicks the button, send an ephemeral message
+        await interaction.response.send_message("Welcome! Please check the #rules channel for guidelines.", ephemeral=True)
+
+# In your on_member_join event, send a message with the view attached:
+@bot.event
+async def on_member_join(member: discord.Member):
+    # Update your heartbeat if needed (if you already track that elsewhere)
+    global last_heartbeat
+    last_heartbeat = time.time()
+    
+    # Locate the welcome channel (adjust the channel name as needed)
+    welcome_channel = discord.utils.get(member.guild.text_channels, name="welcome")
+    if welcome_channel:
+        # Send a welcome message that includes the interactive view
+        await welcome_channel.send(f"Welcome to the server, {member.mention}!", view=WelcomeView())
+Explanation
+Ticket Modal
+This modal uses the original modal.callback pattern. The callback function (which is nested in the modal) captures the user’s input (from the text field) and then sends an ephemeral confirmation message. This pattern works because the callback is an async method defined on the modal instance that is invoked when the modal is submitted.
+Do not use the new on_submit method here—using modal.callback retains your original working behavior.
+
+Welcome Message with Button
+The welcome view defines a single button with its callback defined in the decorator. When a new member joins, your on_member_join event posts a welcome message (in your designated welcome channel) with the view attached. When someone clicks the “Get Started” button, the callback sends an ephemeral message prompting them to check the rules (or any guidance you prefer).
+
+How to Use
+Integrate the Snippet:
+Copy both portions (the Ticket Modal and the WelcomeView + on_member_join event) and paste them into your existing bot.py file. Make sure these appear after you define your bot (i.e. after you call bot = NovaBot(...)).
+
+Retain Your Existing Functionality:
+The rest of your code (the numerous commands like !checkvalue, !spank, !confess, etc.) remains untouched. This snippet only addresses the interactive components that were breaking due to the asynchronous callback issues.
+
+Testing:
+Once inserted, restart your bot on Replit. Your ticket modal should pop up when you use the slash command /ticket and the welcome message should now include a working “Get Started” button on member join.
+
+For Future Reference
+Modal Callback Approach:
+Using modal.callback is fully functional in Discord.py v2.x, even though the docs emphasize the on_submit handler. This method works because the callback is part of the modal object and is called when the modal is submitted. Variables defined in your modal’s init or referenced by the callback remain accessible in that nested async function.
+
+Interactive Views:
+Define button callbacks with the @discord.ui.button decorator inside a discord.ui.View subclass. This ensures that your callbacks receive an interaction, allowing you to respond appropriately.
+
+This snippet should restore your interactive functionality without losing any of your other features. If you experience any more issues, feel free to ask with specific error messages or behavior details.

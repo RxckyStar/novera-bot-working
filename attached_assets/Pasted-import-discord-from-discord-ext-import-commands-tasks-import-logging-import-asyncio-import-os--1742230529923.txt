@@ -1,0 +1,292 @@
+import discord
+from discord.ext import commands, tasks
+import logging
+import asyncio
+import os
+from typing import Optional
+
+from config import (
+    TOKEN, COMMAND_PREFIX,
+    DATA_FILE
+)
+from data_manager import DataManager
+from activity_tracker import ActivityTracker
+from utils import (
+    has_value_management_role, parse_member_mention,
+    format_value_message, format_activity_message,
+    format_ranking_message, has_spank_permission,
+    get_random_spank_response
+)
+
+# Configure detailed logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+def main():
+    logger.info("Starting bot initialization...")
+
+    # Debug token presence
+    if not TOKEN:
+        logger.critical("DISCORD_TOKEN not found in environment variables!")
+        return
+    logger.debug("Discord token loaded successfully")
+
+    # Initialize bot with all necessary intents
+    intents = discord.Intents.default()
+    intents.message_content = True  # Privileged intent
+    intents.members = True          # Privileged intent
+    intents.reactions = True
+    intents.guilds = True
+    logger.debug("Bot intents configured")
+
+    try:
+        bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
+        data_manager = DataManager(DATA_FILE)
+        activity_tracker = ActivityTracker(data_manager)
+        logger.debug("Bot and managers initialized")
+
+        @bot.event
+        async def on_ready():
+            logger.info(f'Bot {bot.user} (ID: {bot.user.id}) has connected to Discord!')
+            logger.info(f'Connected to {len(bot.guilds)} guilds')
+
+            startup_message = (
+                "Bot is ready! Available commands:\n"
+                "👥 User Commands:\n"
+                "• !checkvalue [@user] - Check a user's value (or your own if no user mentioned)\n"
+                "• !checkranking [@user] - Check a user's ranking (or your own if no user mentioned)\n"
+                "• !spank @user - Spank a member (requires 'spank perms' role)\n\n"
+                "👑 Admin Commands:\n"
+                "• !setvalue @user <value> - Set a user's value (Founders, Co-Founders, and Trainers only)\n"
+                "• !activity [@user] - Check a user's message and reaction activity (Founders, Co-Founders, and Trainers only)\n"
+                "• !testinactivity - Manually trigger an inactivity check (Founders, Co-Founders, and Trainers only)\n\n"
+                "Note: Values are displayed in ¥ million 💴"
+            )
+            logger.info(startup_message)
+
+            try:
+                check_inactivity.start()
+                logger.debug("Inactivity check task started")
+            except Exception as e:
+                logger.error(f"Failed to start inactivity check: {e}", exc_info=True)
+
+        @bot.event
+        async def on_message(message):
+            # Ignore messages from bots
+            if message.author.bot:
+                return
+
+            # Track non-command messages for activity
+            if not message.content.startswith(COMMAND_PREFIX):
+                await activity_tracker.track_message(str(message.author.id))
+            
+            # Process commands exactly once per message
+            await bot.process_commands(message)
+
+        @bot.event
+        async def on_reaction_add(reaction, user):
+            if user.bot:
+                return
+            try:
+                logger.debug(f'Reaction added by {user}')
+                await activity_tracker.track_reaction(str(user.id))
+            except Exception as e:
+                logger.error(f"Error processing reaction: {e}", exc_info=True)
+
+        @bot.command(name='setvalue')
+        async def set_value(ctx, member: Optional[discord.Member] = None, value: Optional[int] = None):
+            """Set value for a member (Founder, Co-Founder, or Trainer only)"""
+            try:
+                command_id = id(ctx.message)
+                logger.info(f'[{command_id}] Set value command invoked by {ctx.author} for member {member} with value {value}')
+                logger.debug(f'[{command_id}] Author roles: {[role.name for role in ctx.author.roles]}')
+
+                if not has_value_management_role(ctx.author):
+                    logger.warning(f'[{command_id}] User {ctx.author} attempted to use setvalue without permission.')
+                    await ctx.message.reply("You don't have permission to use this command! Only Novera Founders, Co-Founders, and Trainers can set values.")
+                    return
+
+                if not member or value is None:
+                    await ctx.message.reply("Please provide both member and value. Usage: !setvalue @member value")
+                    return
+
+                if value < 0:
+                    await ctx.message.reply("Value cannot be negative!")
+                    return
+
+                data_manager.set_member_value(str(member.id), value)
+                logger.debug(f"[{command_id}] Setting value for {member.name} to {value}")
+
+                # Handle roles
+                valued_role = discord.utils.get(ctx.guild.roles, name="Valued💸")
+                unvalued_role = discord.utils.get(ctx.guild.roles, name="😭💸Unvalued")
+                try:
+                    if valued_role and not discord.utils.get(member.roles, name="Valued💸"):
+                        await member.add_roles(valued_role)
+                        logger.info(f"[{command_id}] Added Valued role to {member.name}")
+                    if unvalued_role and discord.utils.get(member.roles, name="😭💸Unvalued"):
+                        await member.remove_roles(unvalued_role)
+                        logger.info(f"[{command_id}] Removed Unvalued role from {member.name}")
+                except Exception as e:
+                    logger.error(f"Failed to manage roles: {e}")
+
+                await ctx.message.reply(format_value_message(member, value))
+                logger.info(f'[{command_id}] Successfully set value for {member.name} to {value}')
+
+            except Exception as e:
+                logger.error(f"Error in set_value command: {e}", exc_info=True)
+                await ctx.message.reply("An error occurred while setting the value. Please make sure you're using the command correctly: !setvalue @user value")
+
+        @bot.command(name='checkvalue')
+        async def check_value(ctx, member: Optional[discord.Member] = None):
+            """Check value for a member"""
+            try:
+                command_id = id(ctx.message)
+                if not member:
+                    member = ctx.author
+
+                logger.info(f'[{command_id}] Check value command invoked by {ctx.author} for member {member}')
+                value = data_manager.get_member_value(str(member.id))
+                await ctx.message.reply(format_value_message(member, value))
+                logger.info(f'[{command_id}] Successfully checked value for {member.name}: {value}')
+
+            except Exception as e:
+                logger.error(f"Error in check_value command: {e}", exc_info=True)
+                await ctx.message.reply("An error occurred while checking the value.")
+
+        @bot.command(name='activity')
+        async def check_activity(ctx, member: Optional[discord.Member] = None):
+            """Check activity for a member (Founder, Co-Founder, or Trainer only)"""
+            try:
+                command_id = id(ctx.message)
+                logger.info(f'[{command_id}] Activity check command invoked by {ctx.author} for member {member}')
+
+                if not has_value_management_role(ctx.author):
+                    logger.warning(f'[{command_id}] User {ctx.author} attempted to use activity check without permission')
+                    await ctx.message.reply("You don't have permission to use this command! Only Novera Founders, Co-Founders, and Trainers can check activity.")
+                    return
+
+                if not member:
+                    member = ctx.author
+
+                logger.debug(f'[{command_id}] Checking activity for {member.name}')
+                activity = data_manager.get_activity(str(member.id))
+                await ctx.message.reply(format_activity_message(member, activity))
+                logger.info(f'[{command_id}] Successfully checked activity for {member.name}')
+
+            except Exception as e:
+                logger.error(f"Error in check_activity command: {e}", exc_info=True)
+                await ctx.message.reply("An error occurred while checking activity.")
+
+        @bot.command(name='checkranking')
+        async def check_ranking(ctx, member: Optional[discord.Member] = None):
+            """Check ranking for a member"""
+            try:
+                command_id = id(ctx.message)
+                if not member:
+                    member = ctx.author
+
+                logger.info(f'[{command_id}] Check ranking command invoked by {ctx.author} for member {member}')
+                rank, total_members, value = data_manager.get_member_ranking(str(member.id))
+                response = format_ranking_message(member, rank, total_members, value)
+                await ctx.message.reply(response)
+                logger.info(f'[{command_id}] Successfully checked ranking for {member.name}: Rank {rank}/{total_members}')
+
+            except Exception as e:
+                logger.error(f"Error in check_ranking command: {e}", exc_info=True)
+                await ctx.message.reply("An error occurred while checking the ranking.")
+
+        @bot.command(name='testinactivity')
+        async def test_inactivity(ctx):
+            """Test inactivity check (Founder, Co-Founder, or Trainer only)"""
+            try:
+                if not has_value_management_role(ctx.author):
+                    await ctx.message.reply("You don't have permission to use this command!")
+                    return
+
+                logger.info(f'Manual inactivity check triggered by {ctx.author}')
+                await check_inactivity()
+                await ctx.message.reply("Inactivity check completed!")
+
+            except Exception as e:
+                logger.error(f"Error in test_inactivity command: {e}", exc_info=True)
+                await ctx.message.reply("An error occurred while running the inactivity check.")
+
+        @bot.command(name='spank')
+        async def spank(ctx, member: Optional[discord.Member] = None):
+            """Spank a member (requires spank perms role)"""
+            try:
+                command_id = id(ctx.message)
+                logger.info(f'[{command_id}] Spank command invoked by {ctx.author} for member {member}')
+                author_roles = [role.name for role in ctx.author.roles]
+                logger.debug(f'[{command_id}] Author roles: {author_roles}')
+
+                if not has_spank_permission(ctx.author):
+                    logger.warning(f'[{command_id}] User {ctx.author} attempted to use spank command without permission')
+                    await ctx.message.reply("You don't have permission to use this command! Only members with the 'spank perms' role can use it.")
+                    return
+
+                if not member:
+                    await ctx.message.reply("Please mention someone to spank! Usage: !spank @user")
+                    return
+
+                if member.id == ctx.author.id:
+                    await ctx.message.reply("You can't spank yourself, silly! 😏")
+                    return
+
+                if member.bot:
+                    await ctx.message.reply("You can't spank bots! Mommy Novera doesn't approve~ 😤")
+                    return
+
+                response = get_random_spank_response(member)
+                logger.debug(f'[{command_id}] Generated response: {response}')
+                await ctx.channel.send(response)
+                logger.info(f'[{command_id}] Successfully spanked {member.name}')
+
+            except Exception as e:
+                logger.error(f"Error in spank command: {e}", exc_info=True)
+                await ctx.message.reply("An error occurred while executing the spank command.")
+
+        @tasks.loop(hours=24)
+        async def check_inactivity():
+            try:
+                logger.info('Starting inactivity check')
+                inactive_members = await activity_tracker.check_inactivity()
+                for guild in bot.guilds:
+                    value_suggestions_channel = discord.utils.get(guild.text_channels, name='🤖-value-suggestions')
+                    if not value_suggestions_channel:
+                        logger.warning(f"Could not find '🤖-value-suggestions' channel in guild {guild.name}")
+                        continue
+                    for member_id, info in inactive_members.items():
+                        member = guild.get_member(int(member_id))
+                        if member:
+                            await value_suggestions_channel.send(
+                                f"⚠️ {member.mention} has been inactive (no messages or reactions).\n"
+                                f"Current value: ¥{info['current_value']} million 💴\n"
+                                f"Suggested reduction to: ¥{info['potential_new_value']} million 💴\n"
+                                f"Use !setvalue to adjust their value if needed."
+                            )
+            except Exception as e:
+                logger.error(f"Error in inactivity check: {e}", exc_info=True)
+
+        logger.info('Starting bot...')
+        try:
+            bot.run(TOKEN, log_handler=None)
+        except discord.LoginFailure as e:
+            logger.critical(f"Failed to login: Invalid token or permissions: {e}", exc_info=True)
+        except Exception as e:
+            logger.critical(f"Failed to start bot: {e}", exc_info=True)
+
+    except Exception as e:
+        logger.critical(f"Critical error during bot initialization: {e}", exc_info=True)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Bot shutdown requested")
+    except Exception as e:
+        logger.critical(f"Unexpected error: {e}", exc_info=True)
