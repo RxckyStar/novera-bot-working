@@ -6827,17 +6827,17 @@ async def on_ready():
         update_heartbeat.start()
         logging.info("Started heartbeat update task")
     
-    # ✅ Load the tryouts cog dynamically
-    try:
-        await bot.load_extension("cogs.tryouts")
-        logging.info("✅ Successfully loaded cogs.tryouts (Tryout & SetValue commands ready)")
-    eexcept Exception as e:
+   # ✅ Load the tryouts cog dynamically
+try:
+    await bot.load_extension("cogs.tryouts")
+    logging.info("✅ Successfully loaded cogs.tryouts (Tryout & SetValue commands ready)")
+except Exception as e:
     logging.error(f"⚠️ Failed to load cogs.tryouts: {e}")
-    
-    # Load public help menu (hides admin/dev-only commands)
-    try:
-        await bot.load_extension("cogs.help_public")
-        logging.info("✅ Loaded cogs.help_public (Public help)")
+
+# Load public help menu (hides admin/dev-only commands)
+try:
+    await bot.load_extension("cogs.help_public")
+    logging.info("✅ Loaded cogs.help_public (Public help)")
     except Exception as e:
         logging.error(f"⚠️ Failed to load cogs.help_public: {e}")
         logging.error(f"⚠️ Failed to load cogs.tryouts: {e}")
