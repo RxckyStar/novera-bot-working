@@ -1,4 +1,4 @@
-"""Tryout evaluation functionality"""
+"""Tryout evaluation functionality (edited surgically; no rebuild)"""
 from typing import Optional, Dict
 import asyncio
 import discord
@@ -19,17 +19,11 @@ def set_active_tryouts(tryouts_dict):
     active_tryouts = tryouts_dict
     logger.info("Active tryouts dictionary has been set externally")
 
-# Note: calculate_value function is now defined in bot.py to avoid circular imports
-# The following is the reference implementation for documentation purposes only
-"""
-def calculate_value(ratings: Dict[str, Optional[int]], is_goalkeeper: bool) -> int:
-    # Calculate player value based on ratings
-    # For implementation, see bot.py
-    pass
-"""
+# ---- IDs (kept inline with your bot) ----
+VALUE_ANNOUNCE_CH_ID = 1350172182038446184  # 💸-player-values channel (ID path first)
 
 async def process_player_evaluation(channel, evaluator_id: int, bot) -> Optional[Dict]:
-    """Process a single player evaluation"""
+    """Process a single player evaluation (message-based, as in your original)"""
     try:
         def check(m):
             return m.author.id == evaluator_id and m.channel == channel
@@ -44,14 +38,14 @@ async def process_player_evaluation(channel, evaluator_id: int, bot) -> Optional
         )
 
         msg = await safe_wait_for(bot.wait_for('message', check=check), 300.0)
-        position = msg.content
-        
+        position = msg.content.strip()
+
         # Determine position type
         is_goalkeeper = position == "1"
         is_cm = position == "2"
         is_winger = position == "3"
         is_forward = position == "4"
-        
+
         # Store position for later use
         position_name = {
             "1": "GK (Goalkeeper)",
@@ -59,56 +53,55 @@ async def process_player_evaluation(channel, evaluator_id: int, bot) -> Optional
             "3": "LW/RW (Winger)",
             "4": "CF (Center Forward)"
         }.get(position, "Unknown")
-        
+
         logger.info(f"Received position response: {position}, position: {position_name}")
 
         # Clear transition to skill ratings
         await asyncio.sleep(1)  # Brief pause for readability
         await channel.send(
             "**🎯 Player Skills Evaluation**\n\n"
-            "Let's rate their skills on a scale from 0 to 10!\n"
-            "For each skill, please enter a number between 0 and 10."
+            "Rate each skill **0–10**. (Whole numbers only)\n"
+            f"**Position selected:** {position_name}"
         )
         logger.info("Starting skill ratings evaluation")
 
-        # Get skill ratings
-        skills = {
-            'shooting': '⚽ Rate their shooting ability (0-10):',
-            'dribbling': '👟 Rate their dribbling ability (0-10):',
-            'passing': '🎯 Rate their passing ability (0-10):',
-            'defense': '🛡️ Rate their defensive ability (0-10):',
-            'goalkeeping': '🧤 Rate their goalkeeping ability (0-10) or type "skip":'
-        }
-
+        # Get skill ratings (GK asked only if GK)
+        # ───────────────────────────────────────
         ratings = {}
-        for skill, prompt in skills.items():
+
+        async def ask_numeric(prompt: str, allow_skip: bool = False) -> Optional[int]:
             await channel.send(f"**{prompt}**")
-            logger.info(f"Sending prompt for {skill} rating")
-
             while True:
-                msg = await safe_wait_for(bot.wait_for('message', check=check), 300.0)
-                logger.info(f"Received response for {skill}: {msg.content}")
-
-                if skill == "goalkeeping" and msg.content.lower() == "skip":
-                    ratings[skill] = None
-                    logger.info("Goalkeeping rating skipped")
-                    break
-
+                rmsg = await safe_wait_for(bot.wait_for('message', check=check), 300.0)
+                content = rmsg.content.strip().lower()
+                if allow_skip and content in {"skip", "s"}:
+                    return None
                 try:
-                    rating = int(msg.content)
-                    if 0 <= rating <= 10:
-                        ratings[skill] = rating
-                        logger.info(f"Received valid {skill} rating: {rating}")
-                        break
-                    await channel.send("❌ Please enter a number between 0 and 10!")
+                    val = int(content)
+                    if 0 <= val <= 10:
+                        return val
+                    await channel.send("❌ Please enter a whole number between **0** and **10**.")
                 except ValueError:
-                    await channel.send("❌ Please enter a valid number!")
+                    await channel.send("❌ Please enter a whole number between **0** and **10**.")
+
+        # Shooting
+        ratings['shooting'] = await ask_numeric('⚽ Rate their **shooting** (0–10):')
+        # Dribbling
+        ratings['dribbling'] = await ask_numeric('👟 Rate their **dribbling** (0–10):')
+        # Passing
+        ratings['passing'] = await ask_numeric('🎯 Rate their **passing** (0–10):')
+        # Defense
+        ratings['defense'] = await ask_numeric('🛡️ Rate their **defense** (0–10):')
+        # Goalkeeping only if GK
+        if is_goalkeeper:
+            ratings['goalkeeping'] = await ask_numeric('🧤 Rate their **goalkeeping** (0–10):')
+        else:
+            ratings['goalkeeping'] = None  # auto-skip for non-GK positions
 
         # Get feedback
         await channel.send(
             "**📝 Final Feedback**\n\n"
-            "Please provide your detailed feedback about the player's performance.\n"
-            "Type your feedback message:"
+            "Type your detailed feedback about the player's performance."
         )
         logger.info("Waiting for feedback...")
 
@@ -129,7 +122,7 @@ async def process_player_evaluation(channel, evaluator_id: int, bot) -> Optional
 
     except asyncio.TimeoutError:
         logger.warning(f"Evaluation timed out for evaluator {evaluator_id}")
-        await channel.send("❌ You took too long to respond. Please start over with !tryout @player")
+        await channel.send("❌ You took too long to respond. Please start over with `!tryout @player`")
         return None
     except Exception as e:
         logger.error(f"Error in process_player_evaluation: {e}", exc_info=True)
@@ -137,7 +130,7 @@ async def process_player_evaluation(channel, evaluator_id: int, bot) -> Optional
         return None
 
 async def start_tryout_evaluation(ctx, player: discord.Member):
-    """Start the tryout evaluation process"""
+    """Start the tryout evaluation process (kept same shape; safer lookups/IDs)"""
     try:
         logger.info(f"[TRYOUTS] Started evaluation for {ctx.author}, evaluating {player}")
 
@@ -154,89 +147,83 @@ async def start_tryout_evaluation(ctx, player: discord.Member):
             await ctx.send("An error occurred while starting the evaluation. Please try again.")
             return
 
-        # Send notification to the player being evaluated
+        # Notify the player being evaluated (soft-fail)
         try:
             player_dm = await player.create_dm()
             await player_dm.send(
                 "🎮 **Welcome to Novera Tryouts!**\n"
                 f"{ctx.author.mention} is evaluating your skills.\n"
-                "Stay tuned - your results will be posted soon in the 📋-tryout-results channel! 🌟"
+                "Stay tuned — your results will be posted soon!"
             )
             logger.info(f"[TRYOUTS] Sent notification to tryout player {player}")
         except discord.Forbidden:
             logger.warning(f"[TRYOUTS] Could not send DM to tryout player {player}")
-            # Continue anyway since this is not critical
+        except Exception as e:
+            logger.warning(f"[TRYOUTS] Non-fatal DM error to player: {e}")
 
         # Initialize tryout state
         active_tryouts[ctx.author.id] = {"member": player, "evaluation": None}
         logger.info(f"[TRYOUTS] Initialized tryout state for {ctx.author}")
 
         # Start evaluation process
-        await ctx.send("📩 Check your DMs to start the player evaluation!")
+        await ctx.send("📩 **Check your DMs** to start the player evaluation!")
         await dm_channel.send(
-            f"Welcome to the Novera Tryouts Evaluation System! 📋\n"
-            f"Let's evaluate {player.name}'s skills.\n\n"
+            f"Welcome to the **Novera Tryouts** Evaluation System! 📋\n"
+            f"Let's evaluate **{player.name}**.\n"
         )
 
         # Process evaluation
         evaluation = await process_player_evaluation(dm_channel, ctx.author.id, ctx.bot)
         if evaluation:
             try:
-                # Find tryouts results channel
+                # Find tryouts results channel (keep original name fallback)
                 tryouts_channel = discord.utils.get(ctx.guild.text_channels, name='📋-tryout-results')
                 if not tryouts_channel:
                     logger.error("[TRYOUTS] Could not find 📋-tryout-results channel")
                     await ctx.send("❌ Couldn't find the tryout results channel!")
                     return
 
-                # Calculate value based on player position and ratings
+                # Calculate value based on player position and ratings (kept your weights approach)
                 def calculate_player_value(ratings, position_data):
                     """Calculate player value based on position and ratings"""
-                    # Get position flags
                     is_goalkeeper = position_data["is_goalkeeper"]
                     is_cm = position_data["is_cm"]
                     is_winger = position_data["is_winger"]
                     is_forward = position_data["is_forward"]
-                    
-                    # Define weights based on position
+
                     if is_goalkeeper:
-                        # GK - Goalkeeping is extremely important, passing secondary
                         weights = {
-                            'goalkeeping': 6.0,  # Extremely important
-                            'passing': 1.0,      # Secondary importance
-                            'shooting': 0.1,     # Almost irrelevant
-                            'dribbling': 0.1,    # Almost irrelevant
-                            'defense': 0.3       # Minor importance
+                            'goalkeeping': 6.0,
+                            'passing': 1.0,
+                            'shooting': 0.1,
+                            'dribbling': 0.1,
+                            'defense': 0.3
                         }
                     elif is_cm:
-                        # CM - Defense and passing are most important
                         weights = {
-                            'defense': 3.0,      # Very important
-                            'passing': 3.0,      # Very important
-                            'dribbling': 1.5,    # Moderate importance
-                            'shooting': 1.0,     # Less important
-                            'goalkeeping': 0.1   # Not relevant
+                            'defense': 3.0,
+                            'passing': 3.0,
+                            'dribbling': 1.5,
+                            'shooting': 1.0,
+                            'goalkeeping': 0.1
                         }
                     elif is_winger:
-                        # LW/RW - Dribbling and passing most important
                         weights = {
-                            'dribbling': 3.5,    # Most important
-                            'passing': 2.5,      # Very important
-                            'shooting': 2.0,     # Important
-                            'defense': 0.5,      # Minor importance
-                            'goalkeeping': 0.1   # Not relevant
+                            'dribbling': 3.5,
+                            'passing': 2.5,
+                            'shooting': 2.0,
+                            'defense': 0.5,
+                            'goalkeeping': 0.1
                         }
                     elif is_forward:
-                        # CF - Shooting is extremely important
                         weights = {
-                            'shooting': 5.0,     # Extremely important
-                            'dribbling': 1.5,    # Secondary
-                            'passing': 1.0,      # Tertiary
-                            'defense': 0.2,      # Almost irrelevant
-                            'goalkeeping': 0.1   # Not relevant
+                            'shooting': 5.0,
+                            'dribbling': 1.5,
+                            'passing': 1.0,
+                            'defense': 0.2,
+                            'goalkeeping': 0.1
                         }
                     else:
-                        # Fallback - balanced weights
                         weights = {
                             'shooting': 1.0,
                             'dribbling': 1.0,
@@ -244,31 +231,26 @@ async def start_tryout_evaluation(ctx, player: discord.Member):
                             'defense': 1.0,
                             'goalkeeping': 0.5
                         }
-                
-                    # Calculate value based on weighted ratings
-                    base_value = 0
-                    for skill, rating in ratings.items():
+
+                    base_value = 0.0
+                    max_points = 0.0
+                    for skill, weight in weights.items():
+                        rating = ratings.get(skill)
                         if rating is not None:
-                            base_value += rating * weights[skill]
-                
-                    # Calculate maximum possible points
-                    max_points = sum(weight for skill, weight in weights.items() 
-                                    if ratings.get(skill) is not None) * 10
-                    
-                    # Return value as percentage of max (scaled to 50)
+                            base_value += rating * weight
+                            max_points += 10 * weight
+
                     if max_points > 0:
                         return int((base_value / max_points) * 50)
-                    else:
-                        return 0
-                    
-                # Pass all position data to calculate correct value
+                    return 0
+
                 position_data = {
                     "is_goalkeeper": evaluation["is_goalkeeper"],
                     "is_cm": evaluation["is_cm"],
                     "is_winger": evaluation["is_winger"],
                     "is_forward": evaluation["is_forward"]
                 }
-                
+
                 value = calculate_player_value(evaluation["ratings"], position_data)
                 logger.info(f"[TRYOUTS] Calculated value for {player}: {value}m")
 
@@ -286,56 +268,51 @@ async def start_tryout_evaluation(ctx, player: discord.Member):
                     f"💭 **Evaluator's Feedback:**\n{evaluation['feedback']}\n\n"
                     f"💰 **Calculated Value:** ¥{value}m"
                 )
-
                 await tryouts_channel.send(results_message)
                 logger.info(f"[TRYOUTS] Posted results in tryout results channel for {player}")
 
-                # Set player value directly
+                # Set player value directly via bot.data_manager (kept your logic)
                 try:
-                    # Get data manager from bot context instead of importing
-                    # to avoid circular imports
                     if hasattr(ctx.bot, 'data_manager'):
                         data_manager = ctx.bot.data_manager
-                        # Set the value directly
                         data_manager.set_member_value(str(player.id), value)
                         logger.info(f"[TRYOUTS] Directly set value for {player.id}: {value}m")
                     else:
                         logger.error("[TRYOUTS] Could not access data_manager from bot context")
                         await ctx.send("❌ An error occurred while setting the player's value. Please use !setvalue manually.")
-                    
-                    # Update player roles
+
+                    # Update player roles (kept your IDs/flow)
                     try:
-                        # Remove tryout role and add regular player role
                         tryout_role_id = 1350864967674630144  # Tryout Squad role
                         player_role_id = 1350863646187716640  # Regular Player role
-                        
-                        # Get role objects
+
                         tryout_role = discord.utils.get(ctx.guild.roles, id=tryout_role_id)
                         player_role = discord.utils.get(ctx.guild.roles, id=player_role_id)
-                        
-                        if tryout_role and player_role:
-                            # Remove tryout role
-                            if tryout_role in player.roles:
-                                await player.remove_roles(tryout_role)
-                                logger.info(f"[TRYOUTS] Removed tryout role from {player.id}")
-                            
-                            # Add player role
+
+                        if tryout_role and tryout_role in player.roles:
+                            await player.remove_roles(tryout_role)
+                            logger.info(f"[TRYOUTS] Removed tryout role from {player.id}")
+
+                        if player_role:
                             await player.add_roles(player_role)
                             logger.info(f"[TRYOUTS] Added player role to {player.id}")
-                        else:
-                            logger.error(f"[TRYOUTS] Could not find roles: tryout_role={tryout_role}, player_role={player_role}")
                     except Exception as e:
                         logger.error(f"[TRYOUTS] Error updating roles: {e}", exc_info=True)
-                    
-                    # Post success message in player-value channel
-                    value_channel = discord.utils.get(ctx.guild.text_channels, name='💸-player-values')
-                    if value_channel:
-                        await value_channel.send(f"💰 {player.mention}'s value has been set to ¥{value} million! Welcome to the team! 🎉")
+
+                    # Announce via channel ID first, fallback to name
+                    value_channel = ctx.guild.get_channel(VALUE_ANNOUNCE_CH_ID)
+                    if not value_channel or not isinstance(value_channel, discord.TextChannel):
+                        value_channel = discord.utils.get(ctx.guild.text_channels, name='💸-player-values')
+
+                    if value_channel and isinstance(value_channel, discord.TextChannel):
+                        await value_channel.send(
+                            f"💰 {player.mention}'s value has been set to **¥{value} million**! Welcome to the team! 🎉"
+                        )
                         logger.info(f"[TRYOUTS] Posted value confirmation for {player}: {value}m")
                     else:
-                        logger.error("[TRYOUTS] Could not find player values channel")
+                        logger.error("[TRYOUTS] Could not find player values channel (ID or name)")
                         await ctx.send("⚠️ Could not find player values channel to announce value!")
-                
+
                 except Exception as e:
                     logger.error(f"[TRYOUTS] Error setting player value: {e}", exc_info=True)
                     await ctx.send("❌ An error occurred while setting the player's value. Please use !setvalue manually.")
