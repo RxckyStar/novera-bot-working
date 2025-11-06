@@ -6827,27 +6827,20 @@ async def on_ready():
         update_heartbeat.start()
         logging.info("Started heartbeat update task")
 
-    # ✅ Load the tryouts cog dynamically
-    try:
-        await bot.load_extension("cogs.tryouts")
-        logging.info("✅ Successfully loaded cogs.tryouts (Tryout & SetValue commands ready)")
-    except Exception as e:
-        logging.error(f"⚠️ Failed to load cogs.tryouts: {e}")
+    # Load cogs (guarded so we don't reload on reconnects)
+    async def _load(ext: str, label: str):
+        if ext not in bot.extensions:
+            try:
+                await bot.load_extension(ext)
+                logging.info(f"✅ Loaded {ext} ({label})")
+            except Exception as e:
+                logging.error(f"⚠️ Failed to load {ext}: {e}", exc_info=True)
 
-    # ✅ Load public help menu (hides admin/dev-only commands)
-    try:
-        await bot.load_extension("cogs.help_public")
-        logging.info("✅ Loaded cogs.help_public (Public help)")
-    except Exception as e:
-        logging.error(f"⚠️ Failed to load cogs.help_public: {e}")
-    
-    # Print final confirmation
+    await _load("cogs.tryouts", "Tryout flow")
+    await _load("cogs.help_public", "Public help")
+    await _load("cogs.value_admin", "SetValue command")
+
     print(f"🤖 Logged in as {bot.user} and all systems are running.")
-try:
-    await bot.load_extension("cogs.value_admin")
-    logging.info("Loaded cogs.value_admin")
-except Exception as e:
-    logging.error(f"Failed loading cogs.value_admin: {e}")
 
 @bot.event
 async def on_disconnect():
