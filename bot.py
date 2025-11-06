@@ -6817,29 +6817,29 @@ async def on_ready():
     """Called when the bot successfully connects to Discord"""
     logging.info(f"Bot is ready! Logged in as {bot.user.name} ({bot.user.id})")
     logging.info(f"Connected to {len(bot.guilds)} guilds with {sum(g.member_count for g in bot.guilds)} members")
-    
+
     # Start the heartbeat system
     heartbeat = heartbeat_manager.get_heartbeat_manager("discord_bot")
     await heartbeat.start()
-    
+
     # Start the heartbeat update task
     if not update_heartbeat.is_running():
         update_heartbeat.start()
         logging.info("Started heartbeat update task")
-    
-   # ✅ Load the tryouts cog dynamically
-try:
-    await bot.load_extension("cogs.tryouts")
-    logging.info("✅ Successfully loaded cogs.tryouts (Tryout & SetValue commands ready)")
-except Exception as e:
-    logging.error(f"⚠️ Failed to load cogs.tryouts: {e}")
 
-# ✅ Load public help menu (hides admin/dev-only commands)
-try:
-    await bot.load_extension("cogs.help_public")
-    logging.info("✅ Loaded cogs.help_public (Public help)")
-except Exception as e:
-    logging.error(f"⚠️ Failed to load cogs.help_public: {e}")
+    # ✅ Load the tryouts cog dynamically
+    try:
+        await bot.load_extension("cogs.tryouts")
+        logging.info("✅ Successfully loaded cogs.tryouts (Tryout & SetValue commands ready)")
+    except Exception as e:
+        logging.error(f"⚠️ Failed to load cogs.tryouts: {e}")
+
+    # ✅ Load public help menu (hides admin/dev-only commands)
+    try:
+        await bot.load_extension("cogs.help_public")
+        logging.info("✅ Loaded cogs.help_public (Public help)")
+    except Exception as e:
+        logging.error(f"⚠️ Failed to load cogs.help_public: {e}")
     
     # Print final confirmation
     print(f"🤖 Logged in as {bot.user} and all systems are running.")
