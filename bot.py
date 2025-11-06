@@ -6808,6 +6808,17 @@ async def on_ready():
     if not update_heartbeat.is_running():
         update_heartbeat.start()
         logging.info("Started heartbeat update task")
+    
+    # ✅ Load the tryouts cog dynamically
+    try:
+        await bot.load_extension("cogs.tryouts")
+        logging.info("✅ Successfully loaded cogs.tryouts (Tryout & SetValue commands ready)")
+    except Exception as e:
+        logging.error(f"⚠️ Failed to load cogs.tryouts: {e}")
+    
+    # Print final confirmation
+    print(f"🤖 Logged in as {bot.user} and all systems are running.")
+
 
 @bot.event
 async def on_disconnect():
