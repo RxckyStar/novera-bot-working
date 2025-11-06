@@ -125,6 +125,20 @@ COMMAND_PREFIX = "!"
 
 # Create bot instance with intents
 bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
+# Allow custom help cog to override default
+try:
+    bot.remove_command("help")
+except Exception:
+    pass
+
+# --- Novera join/leave channel for simple server-wide messages ---
+WELCOME_LEAVE_CHANNEL_ID = 1350199401426980955
+LEAVE_LINES = [
+    "{name} left the pitch. We’ll keep the lights on.",
+    "{name} dipped. See you around.",
+    "{name} has left. GG and good luck."
+]
+
 
 # Enhanced token validation and import with fallback mechanism
 try:
@@ -3769,6 +3783,10 @@ async def getevaluated_command(ctx):
 
 @bot.command(name="tryoutsresults", aliases=["tryoutrsresults", "tryoutresults"])
 async def tryouts_results_command(ctx, member: Optional[discord.Member] = None, *args):
+    # Command disabled by request
+    await ctx.send("Tryout results command is currently disabled.")
+    return
+
     """Submit tryouts results for a player - Trainers role only (role ID: 1350175902738419734)"""
     # EXTENSIVE LOGGING FOR DEBUGGING
     logging.info(f"*** TRYOUTS COMMAND RECEIVED from {ctx.author.name} (ID: {ctx.author.id}) ***")
@@ -6814,6 +6832,13 @@ async def on_ready():
         await bot.load_extension("cogs.tryouts")
         logging.info("✅ Successfully loaded cogs.tryouts (Tryout & SetValue commands ready)")
     except Exception as e:
+
+    # Load public help menu (hides admin/dev-only commands)
+    try:
+        await bot.load_extension("cogs.help_public")
+        logging.info("✅ Loaded cogs.help_public (Public help)")
+    except Exception as e:
+        logging.error(f"⚠️ Failed to load cogs.help_public: {e}")
         logging.error(f"⚠️ Failed to load cogs.tryouts: {e}")
     
     # Print final confirmation
@@ -6847,3 +6872,14 @@ if __name__ == "__main__":
         logger.critical(f"Error starting bot: {e}")
         import traceback
         logger.critical(traceback.format_exc())
+
+
+@bot.event
+async def on_member_remove(member):
+    try:
+        channel = bot.get_channel(WELCOME_LEAVE_CHANNEL_ID)
+        if channel:
+            import random
+            await channel.send(random.choice(LEAVE_LINES).format(name=member.display_name))
+    except Exception as e:
+        logging.debug(f"leave message failed: {e}")
