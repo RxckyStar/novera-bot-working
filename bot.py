@@ -6843,7 +6843,11 @@ async def on_ready():
     
     # Print final confirmation
     print(f"🤖 Logged in as {bot.user} and all systems are running.")
-
+try:
+    await bot.load_extension("cogs.value_admin")
+    logging.info("Loaded cogs.value_admin")
+except Exception as e:
+    logging.error(f"Failed loading cogs.value_admin: {e}")
 
 @bot.event
 async def on_disconnect():
