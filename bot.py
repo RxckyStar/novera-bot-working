@@ -6831,8 +6831,9 @@ async def on_ready():
     try:
         await bot.load_extension("cogs.tryouts")
         logging.info("✅ Successfully loaded cogs.tryouts (Tryout & SetValue commands ready)")
-    except Exception as e:
-
+    eexcept Exception as e:
+    logging.error(f"⚠️ Failed to load cogs.tryouts: {e}")
+    
     # Load public help menu (hides admin/dev-only commands)
     try:
         await bot.load_extension("cogs.help_public")
