@@ -3534,7 +3534,7 @@ class TryoutsView(discord.ui.View):
                     data_manager.set_member_value(str(self.player.id), value)
                     
                     # Notify in the channel where the command was used
-                    await self.ctx.send(f"✅ Tryout evaluation for {self.player.mention} has been completed! Their value has been set to **{value} million**.")
+                    await self.ctx.send(f"✅ Tryout evaluation for {self.player.mention} has been completed! Their value has been set to **¥{value} million**.")
                     
                 except Exception as e:
                     logging.error(f"Error updating roles: {e}")
@@ -6565,7 +6565,7 @@ async def on_message(message):
                                     await player_dm.send(
                                         f"# 🎉 Your Evaluation is Complete!\n\n"
                                         f"Darling, Mommy has the results of your evaluation! 💖\n\n"
-                                        f"Your value has been set to **¥{value} million**!\n\n"
+                                        f"Your value has been set to **¥¥{value} million**!\n\n"
                                         f"Check the tryouts channel to see your full evaluation! 📋"
                                     )
                                     logging.info(f"[TRYOUTS] Sent completion DM to player {member_id}")
