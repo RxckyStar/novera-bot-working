@@ -1,6 +1,10 @@
-
 # cogs/tryouts.py
-# Tryout flow with position-aware weights and "dribbling" added; richer evaluator summary.
+# Novera Tryout System
+# - Command: !tryout @user
+# - DM interview for the candidate (position + 6 questions)
+# - DM evaluator panel with ratings (1–10)
+# - Computes a value (15–¥100 million 💴), saves it via data_manager,
+#   gives the Evaluated role, announces in a channel, and DMs the player.
 
 from __future__ import annotations
 import asyncio, random, logging, time, traceback
@@ -16,25 +20,23 @@ ANNOUNCE_CHANNEL_ID  = 1350172182038446184  # where to post results
 EVALUATED_ROLE_ID    = 1350863646187716640  # role to give after value is set
 
 POSITIONS = ["CF", "LW", "RW", "CM", "GK"]
+OUTFIELD_POS = ["CF", "LW", "RW", "CM"]
 
-# Position-specific weights (user-specified)
-WEIGHTS = {
-    "CF": {"shooting": 0.40, "dribbling": 0.30, "passing": 0.20, "defending": 0.10},
-    "LW": {"passing": 0.40, "dribbling": 0.30, "shooting": 0.20, "defending": 0.10},
-    "RW": {"passing": 0.40, "dribbling": 0.30, "shooting": 0.20, "defending": 0.10},
-    "CM": {"defending": 0.40, "dribbling": 0.30, "passing": 0.20, "shooting": 0.10},
-    "GK": {"goalkeeping": 0.60, "defending": 0.25, "passing": 0.15},
-}
+# (kept; not used for final weights but harmless)
+WEIGHTS_OUTFIELD = {"shooting": 0.35, "passing": 0.35, "defending": 0.30}
+WEIGHTS_GK      = {"goalkeeping": 0.60, "defending": 0.25, "passing": 0.15}
 
-MAX_VALUE_M = 100  # clamp ceil
+MAX_VALUE_M = 100  # hard cap (min is enforced at 15 below)
 
 WELCOME_VARIANTS = [
     "🎴 **Welcome to Novera Tryouts!** Big day, {mention}—this could be your rise to #1!",
     "🏆 **Novera Tryouts** commencing—{mention}, your moment starts now.",
-    "⚡ **Novera Tryouts**: {mention}, show us why you belong at the top.",
+    "⚡ **Novera Tryouts**: {mention}, show us why you belong at the top."
 ]
 POSITION_PROMPT_VARIANTS = [
-    "Choose your **position**:", "Select the role you’ll represent:", "Pick your position:"
+    "Choose your **position**:",
+    "Select the role you’ll represent:",
+    "Pick your position:"
 ]
 INTERVIEW_QS = [
     "What’s your **primary playstyle** (e.g., clinical finisher, creator, two-way workhorse)?",
@@ -42,45 +44,49 @@ INTERVIEW_QS = [
     "Describe a moment that shows your **composure under pressure**.",
     "What **strengths** do you bring to a team? (2–3 points)",
     "What’s your biggest **area to improve** and how will you work on it?",
-    "How many **scrims** can you commit to weekly?",
+    "How many **scrims** can you commit to weekly?"
 ]
 THANKS_VARIANTS = [
     "Nice—interview recorded. We’ll follow up soon. 💼",
     "Got it. Your answers are locked. 📘",
-    "Thanks! The evaluator will score you shortly. 📝",
+    "Thanks! The evaluator will score you shortly. 📝"
 ]
 EVAL_HEADER_VARIANTS = [
     "🧪 **Novera Tryout Evaluator Panel**",
     "📊 **Novera Scouting Suite**",
-    "🎯 **Novera Evaluations**",
+    "🎯 **Novera Evaluations**"
 ]
 EVAL_FOOTER_VARIANTS = [
     "Select ratings (1–10), then submit.",
     "Score the categories below and hit Submit.",
-    "Give your objective ratings and finalize.",
+    "Give your objective ratings and finalize."
 ]
 ANNOUNCE_VARIANTS = [
-    "📣 **Novera Tryout Result**: {mention} is now valued at **{value}M**.",
-    "🔥 **Evaluation Complete** — {mention} assigned a value of **{value}M**.",
-    "🏁 **Tryout Finished**: {mention} set to **{value}M**.",
+    "📣 **Novera Tryout Result**: {mention} is now valued at **¥{value} million 💴 million 💴**.",
+    "🔥 **Evaluation Complete** — {mention} assigned a value of **¥¥{value} million 💴**.",
+    "🏁 **Tryout Finished**: {mention} set to **¥{value} million 💴**."
 ]
 
 # ================= ECONOMY BACKEND =======================
-from data_manager import DataManager  # use the class; instance resolved at runtime
+import data_manager
 
-def get_dm(bot) -> DataManager | None:
-    dm = getattr(bot, "data_manager", None)
-    if isinstance(dm, DataManager):
-        return dm
-    try:
-        dm = DataManager("member_data.json")
-        setattr(bot, "data_manager", dm)
-        return dm
-    except Exception as e:
-        logging.error(f"[tryouts] failed to init DataManager: {e}")
-        return None
+def get_value(uid: int) -> int:
+    return int(data_manager.get_member_value(str(uid)))
+
+def set_value(uid: int, new_m: int):
+    data_manager.set_member_value(str(uid), max(0, int(new_m)))
+
+def ensure_member(uid: int):
+    if hasattr(data_manager, "ensure_member"):
+        try:
+            data_manager.ensure_member(str(uid))
+        except Exception:
+            pass
+
+# ================== HELPERS/UTILS ========================
 
 async def add_evaluated_role(bot: commands.Bot, guild_id: int, user_id: int):
+    """Give the evaluated role (ignore errors if perms/position block it)."""
     guild = bot.get_guild(guild_id)
     if not guild:
         return
@@ -90,14 +96,15 @@ async def add_evaluated_role(bot: commands.Bot, guild_id: int, user_id: int):
         if member and role and role not in member.roles:
             await member.add_roles(role, reason="Novera: value set / evaluated")
     except Exception:
-        logging.exception("[tryouts] add role failed")
+        logging.exception("Failed to add evaluated role")
 
 def has_role(member: discord.Member, role_id: int) -> bool:
-    return any(r.id == role_id for r in getattr(member, "roles", []))
+    return any(r.id == role_id for r in member.roles)
+
+def _in_dm(interaction: discord.Interaction) -> bool:
+    return isinstance(interaction.channel, discord.DMChannel) or interaction.guild is None
 
 # ================== MODELS ===============================
-
-from dataclasses import dataclass, field
 
 @dataclass
 class TryoutInterview:
@@ -111,8 +118,8 @@ class TryoutInterview:
 # ================== UI ELEMENTS ==========================
 
 class PositionSelect(discord.ui.Select):
-    def __init__(self):
-        options = [discord.SelectOption(label=p, value=p) for p in POSITIONS]
+    def __init__(self, allowed: List[str]):
+        options = [discord.SelectOption(label=p, value=p) for p in allowed]
         super().__init__(
             placeholder=random.choice(POSITION_PROMPT_VARIANTS),
             min_values=1, max_values=1, options=options
@@ -120,10 +127,13 @@ class PositionSelect(discord.ui.Select):
         self.choice: Optional[str] = None
 
     async def callback(self, interaction: discord.Interaction):
+        # Ephemeral is NOT supported in DMs -> use defer + followup
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         self.choice = self.values[0]
         try:
-            await interaction.response.send_message(f"Position set: **{self.choice}**", ephemeral=True)
-        except discord.errors.InteractionResponded:
+            await interaction.followup.send(f"Position set: **{self.choice}**")
+        except Exception:
             pass
 
 class RatingSelect(discord.ui.Select):
@@ -134,20 +144,22 @@ class RatingSelect(discord.ui.Select):
         self.score: Optional[int] = None
 
     async def callback(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         self.score = int(self.values[0])
         try:
-            await interaction.response.send_message(f"{self.metric.capitalize()} = **{self.score}**", ephemeral=True)
-        except discord.errors.InteractionResponded:
+            await interaction.followup.send(f"{self.metric.capitalize()} = **{self.score}**")
+        except Exception:
             pass
 
 class EvaluatorView(discord.ui.View):
     def __init__(self, candidate_id: int, candidate_pos: str, callback_done):
-        super().__init__(timeout=300)
+        super().__init__(timeout=900)  # 15 minutes
         self.candidate_id = candidate_id
         self.candidate_pos = candidate_pos
         self.callback_done = callback_done
 
-        # Core metrics
+        # Always include these three
         self.sel_shoot = RatingSelect("Shooting")
         self.sel_pass  = RatingSelect("Passing")
         self.sel_def   = RatingSelect("Defending")
@@ -155,40 +167,40 @@ class EvaluatorView(discord.ui.View):
         self.add_item(self.sel_pass)
         self.add_item(self.sel_def)
 
-        # Dribbling for all outfield positions
+        # NEW: Dribbling for all outfield
         self.sel_drib: Optional[RatingSelect] = None
-        if candidate_pos != "GK":
-            self.sel_drib = RatingSelect("Dribbling")
-            self.add_item(self.sel_drib)
+        self.sel_gk:   Optional[RatingSelect] = None
 
-        # GK-specific
-        self.sel_gk: Optional[RatingSelect] = None
         if candidate_pos == "GK":
             self.sel_gk = RatingSelect("Goalkeeping")
             self.add_item(self.sel_gk)
+        else:
+            self.sel_drib = RatingSelect("Dribbling")
+            self.add_item(self.sel_drib)
 
     @discord.ui.button(label="Submit Ratings", style=discord.ButtonStyle.success)
     async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Defer immediately to avoid "interaction failed"
-        try:
-            await interaction.response.defer(ephemeral=True, thinking=False)
-        except discord.errors.InteractionResponded:
-            pass
+        if not interaction.response.is_done():
+            await interaction.response.defer()
 
-        # Validate selections
         missing = []
         for sel in [self.sel_shoot, self.sel_pass, self.sel_def]:
             if sel.score is None:
                 missing.append(sel.metric)
-        if self.sel_drib and self.sel_drib.score is None:
-            missing.append(self.sel_drib.metric)
-        if self.sel_gk and self.sel_gk.score is None:
-            missing.append(self.sel_gk.metric)
+        if self.candidate_pos == "GK":
+            if not self.sel_gk or self.sel_gk.score is None:
+                missing.append("goalkeeping")
+        else:
+            if not self.sel_drib or self.sel_drib.score is None:
+                missing.append("dribbling")
 
         if missing:
-            await interaction.followup.send(
-                f"Missing: {', '.join(missing)}. Please select all scores.", ephemeral=True
-            )
+            try:
+                await interaction.followup.send(
+                    f"Missing: {', '.join(missing)}. Please select all scores."
+                )
+            except Exception:
+                pass
             return
 
         payload = {
@@ -196,9 +208,12 @@ class EvaluatorView(discord.ui.View):
             "passing":  self.sel_pass.score,
             "defending": self.sel_def.score,
             "dribbling": self.sel_drib.score if self.sel_drib else None,
-            "goalkeeping": self.sel_gk.score if self.sel_gk else None,
+            "goalkeeping": self.sel_gk.score if self.sel_gk else None
         }
-        await interaction.followup.send("Submitted. ✅", ephemeral=True)
+        try:
+            await interaction.followup.send("Submitted. ✅")
+        except Exception:
+            pass
         await self.callback_done(payload)
 
 # ================== COG =================================
@@ -241,9 +256,19 @@ class Tryouts(commands.Cog):
 
             # Position select
             pos_view = discord.ui.View(timeout=180)
-            pos_sel = PositionSelect()
+            pos_sel = PositionSelect(POSITIONS)
             pos_view.add_item(pos_sel)
             pos_msg = await dm.send("—", view=pos_view)
+
+            # also nudge public channel
+            try:
+                await ctx.send(
+                    f"{member.mention} check your **DMs** to start the tryout "
+                    f"(enable *Privacy > Allow DMs from server members* if you don’t see it).",
+                    delete_after=25
+                )
+            except Exception:
+                pass
 
             # wait for position
             for _ in range(360):
@@ -263,7 +288,7 @@ class Tryouts(commands.Cog):
             # 6 interview questions
             await dm.send("Answer these quick questions (reply as messages):")
             for idx, q in enumerate(INTERVIEW_QS, start=1):
-                await dm.send(f"**Q{idx}. {q}**")
+                await dm.send(f"**Q{idx}.** {q}")
                 def check(m: discord.Message): return m.author.id == member.id and m.channel.id == dm.id
                 try:
                     msg = await self.bot.wait_for("message", timeout=180, check=check)
@@ -289,7 +314,7 @@ class Tryouts(commands.Cog):
         # ==== Evaluator panel ====
         try:
             evaluator_dm = await ctx.author.create_dm()
-            # summary embed (show question text AND answers)
+            # summary embed (now shows question text + answer)
             emb = discord.Embed(
                 title=random.choice(EVAL_HEADER_VARIANTS),
                 description=f"Candidate: **{member}** ({member.mention})\nPosition: **{sess.position}**",
@@ -302,32 +327,21 @@ class Tryouts(commands.Cog):
 
             async def done_cb(scores: Dict[str, int]):
                 value_m = self._compute_value(sess.position, scores)
-                dm_backend = get_dm(self.bot)
-                if dm_backend is None:
-                    await evaluator_dm.send("Backend error while saving value. Check logs.")
-                    return
+                ensure_member(member.id)
+                set_value(member.id, value_m)
 
-                uid = str(member.id)
-                old_val = dm_backend.get_member_value(uid)
-                dm_backend.set_member_value(uid, value_m)
-
-                # Give evaluated role
+                # Give evaluated role (ignore errors)
                 try:
                     await add_evaluated_role(self.bot, sess.guild_id, member.id)
                 except Exception:
                     logging.exception("Role add failed after tryout set")
 
-                # DM evaluator confirmation (pretty)
-                delta = value_m - old_val
-                sign = "+" if delta >= 0 else ""
+                # DM evaluator confirmation
                 conf = discord.Embed(
                     title="✅ Evaluation Saved",
-                    description=f"{member.mention}",
+                    description=f"Set **{member}** to **¥{value_m} million 💴**.",
                     color=discord.Color.green()
                 )
-                conf.add_field(name="Previous", value=f"{old_val}M", inline=True)
-                conf.add_field(name="New", value=f"{value_m}M", inline=True)
-                conf.add_field(name="Change", value=f"{sign}{delta}M", inline=True)
                 await evaluator_dm.send(embed=conf)
 
                 # Announce in channel
@@ -339,17 +353,15 @@ class Tryouts(commands.Cog):
                     except Exception:
                         logging.exception("Announce failed")
 
-                # DM candidate, mommy vibe
+                # DM candidate
                 try:
                     cdm = await member.create_dm()
-                    await cdm.send(
-                        f"🏅 Mommy set your Novera value to **{value_m}M**. Keep working hard, sweetie!"
-                    )
+                    await cdm.send(f"🏅 Your Novera value has been set to **¥¥{value_m} million 💴**. Congratulations!")
                 except Exception:
                     logging.exception("Candidate DM failed")
 
                 # cleanup
-                self.sessions.pop(self._key(ctx.guild.id, member.id), None)
+                self.sessions.pop(self._key(sess.guild_id, member.id), None)
 
             view = EvaluatorView(candidate_id=member.id, candidate_pos=sess.position, callback_done=done_cb)
             await evaluator_dm.send(embed=emb, view=view)
@@ -362,23 +374,50 @@ class Tryouts(commands.Cog):
         await ctx.reply(f"Tryout started for {member.mention}. Check your DMs for the evaluator panel.", mention_author=False)
 
     # ---------- value math ----------
-    def _compute_value(self, position: str, s: Dict[str, int]) -> int:
+    def _compute_value(self, position: str, scores: Dict[str, int]) -> int:
         """
-        Convert 1–10 ratings to a final value (millions) using position-aware weights.
-        Scaled to ~15..100M and clamped.
+        Convert 1–10 ratings to a final value (millions).
+        NEW weights by role with Dribbling:
+          CF  : Shooting>Dribbling>Passing>Defending
+          LW/RW: Passing>Dribbling>Shooting>Defending
+          CM  : Defending>Dribbling>Passing>Shooting
+          GK  : Goalkeeping only (others ignored)
+        Scaled to ~15..¥100 million 💴 and clamped.
         """
-        def g(name, default=5):
-            v = s.get(name)
-            if v is None:
-                return default
-            return max(1, min(10, int(v)))
+        def clamp10(x): return max(1, min(10, int(x)))
 
-        w = WEIGHTS.get(position, WEIGHTS["CF"])
-        total = 0.0
-        for k, weight in w.items():
-            total += g(k) * weight
+        if position == "GK":
+            gk = clamp10(scores.get("goalkeeping", 5))
+            df = clamp10(scores.get("defending",   5))
+            ps = clamp10(scores.get("passing",     5))
+            raw = gk*0.60 + df*0.25 + ps*0.15
+        elif position == "CF":
+            sh = clamp10(scores.get("shooting",   5))
+            dr = clamp10(scores.get("dribbling",  5))
+            ps = clamp10(scores.get("passing",    5))
+            df = clamp10(scores.get("defending",  5))
+            raw = sh*0.40 + dr*0.30 + ps*0.20 + df*0.10
+        elif position in ("LW", "RW"):
+            ps = clamp10(scores.get("passing",    5))
+            dr = clamp10(scores.get("dribbling",  5))
+            sh = clamp10(scores.get("shooting",   5))
+            df = clamp10(scores.get("defending",  5))
+            raw = ps*0.35 + dr*0.30 + sh*0.20 + df*0.15
+        elif position == "CM":
+            df = clamp10(scores.get("defending",  5))
+            dr = clamp10(scores.get("dribbling",  5))
+            ps = clamp10(scores.get("passing",    5))
+            sh = clamp10(scores.get("shooting",   5))
+            raw = df*0.35 + dr*0.30 + ps*0.20 + sh*0.15
+        else:
+            # Fallback (shouldn't happen)
+            sh = clamp10(scores.get("shooting",   5))
+            ps = clamp10(scores.get("passing",    5))
+            dr = clamp10(scores.get("dribbling",  5))
+            df = clamp10(scores.get("defending",  5))
+            raw = sh*0.30 + ps*0.30 + dr*0.20 + df*0.20
 
-        value = int(round(total * 10))           # 1..10 -> 10..100
+        value = int(round(raw * 10))           # 1..10 -> 10..100
         value = max(15, min(value, MAX_VALUE_M))  # clamp 15..100
         return value
 
