@@ -6838,7 +6838,8 @@ async def on_ready():
 
     await _load("cogs.tryouts", "Tryout flow")
     await _load("cogs.help_public", "Public help")
-    await _load("cogs.value_admin", "SetValue command")
+    await _load("cogs.value_admin", "Set/Adjust Value")
+    await _load("cogs.anteup", "Ante Up & Match Ads")   # ⬅️ added
 
     print(f"🤖 Logged in as {bot.user} and all systems are running.")
 
