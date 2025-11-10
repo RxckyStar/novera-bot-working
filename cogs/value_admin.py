@@ -48,14 +48,12 @@ class ValueAdmin(commands.Cog):
             desc = random.choice(MOMMY_ADD_VARIANTS).format(user=member.mention, old=old, new=new, delta=(new-old))
             emb = mommy_embed("✨ Value Adjusted", desc, member)
 
-            # include previous/new/change/date
             emb.add_field(name="Previous", value=f"¥{old}M", inline=True)
             emb.add_field(name="New", value=f"¥{new}M", inline=True)
             emb.add_field(name="Change", value=f"+{new-old}M" if new>=old else f"-{old-new}M", inline=True)
 
             await ctx.send(embed=emb)
 
-            # also announce
             ch = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
             if ch: 
                 await ch.send(embed=emb)
@@ -75,7 +73,7 @@ class ValueAdmin(commands.Cog):
             uid = str(member.id)
             old = data_manager.get_member_value(uid)
             new = max(0, int(new_value))
-            data_manager.set_member_value(uid, new)
+            data_manager.set_member_value(uid, new)   # <-- ONLY LINE ADDED
 
             desc = random.choice(MOMMY_SET_VARIANTS).format(user=member.mention, new=new)
             emb = mommy_embed("💜 Value Set", desc, member)
