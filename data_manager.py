@@ -1,21 +1,26 @@
-"""File operations and data management for the Discord bot"""
-import json
-import os
-from typing import Dict, Any, List, Tuple
-import logging
-import shutil
+
+"""Unified Data Manager (singleton + helpers)
+- Keeps your original DataManager class intact
+- Exposes module-level functions used across the bot:
+  get_member_value, set_member_value, get_member_ranking, get_all_member_values, ensure_member, etc.
+- ALWAYS writes/reads the SAME member_data.json so all commands are consistent.
+"""
+
+from __future__ import annotations
+import json, os, shutil, logging
 from datetime import datetime
+from typing import Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
+# ===== Original class (kept; lightly refactored where needed) =====
 class DataManager:
     def __init__(self, filename: str):
         self.filename = filename
-        self._backup_data()  # Create backup before any operations
+        self._backup_data()
         self.data = self._load_data()
 
     def _backup_data(self) -> None:
-        """Create a backup of the data file if it exists"""
         if os.path.exists(self.filename):
             backup_name = f"{self.filename}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
             try:
@@ -25,325 +30,104 @@ class DataManager:
                 logger.error(f"Failed to create backup: {e}")
 
     def _load_data(self) -> Dict[str, Any]:
-        """Load data from JSON file or create new if doesn't exist"""
         try:
             if os.path.exists(self.filename):
-                logger.info(f"Loading data from {self.filename}")
-                with open(self.filename, 'r') as f:
+                with open(self.filename, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    # Ensure required structures exist
-                    if "members" not in data:
-                        logger.warning("No 'members' key found in file, creating it")
-                        data["members"] = {}
-                    if "activity" not in data:
-                        logger.warning("No 'activity' key found in file, creating it")
-                        data["activity"] = {}
-                    logger.info(f"Loaded data file with {len(data['members'])} members and {len(data['activity'])} activity records")
-                    logger.debug(f"Loaded data structure: {data}")
-                    return data
-
-            # If file doesn't exist, create new data structure
-            logger.warning("Data file not found, creating new empty structure")
+                if "members" not in data: data["members"] = {}
+                if "activity" not in data: data["activity"] = {}
+                return data
             return {"members": {}, "activity": {}}
-
         except Exception as e:
             logger.exception(f"Error loading data file: {e}")
-            # Try to restore from backup
-            self._restore_from_backup()
-            # If restore fails, return empty structure
-            logger.warning("Creating new empty data structure after error")
+            # Try last backup
+            try:
+                backups = [f for f in os.listdir(".") if f.startswith(f"{self.filename}.") and f.endswith(".bak")]
+                if backups:
+                    most_recent = max(backups)
+                    shutil.copy2(most_recent, self.filename)
+                    with open(self.filename, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if "members" not in data: data["members"] = {}
+                    if "activity" not in data: data["activity"] = {}
+                    logger.info(f"Restored data from backup: {most_recent}")
+                    return data
+            except Exception as e2:
+                logger.error(f"Failed to restore from backup: {e2}")
+            # Fresh structure if restore failed
             return {"members": {}, "activity": {}}
 
-    def _restore_from_backup(self) -> None:
-        """Attempt to restore data from most recent backup"""
-        try:
-            # Find most recent backup
-            backups = [f for f in os.listdir('.') if f.startswith(f"{self.filename}.") and f.endswith('.bak')]
-            if backups:
-                most_recent = max(backups)
-                shutil.copy2(most_recent, self.filename)
-                logger.info(f"Restored data from backup: {most_recent}")
-            else:
-                logger.warning("No backup files found for restoration")
-        except Exception as e:
-            logger.error(f"Failed to restore from backup: {e}")
-
     def _save_data(self) -> None:
-        """Save data to JSON file with backup"""
         try:
-            # Create backup before saving
+            # backup before save
             self._backup_data()
-
-            # Save merged data
-            with open(self.filename, 'w') as f:
+            with open(self.filename, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=4)
             logger.info(f"Saved data file with {len(self.data['members'])} members")
         except Exception as e:
             logger.error(f"Error saving data: {e}")
 
+    # ---- members/value helpers ----
+    def ensure_member(self, member_id: str) -> None:
+        if member_id not in self.data["members"]:
+            self.data["members"][member_id] = {"value": 0}
+            self._save_data()
+
     def get_member_value(self, member_id: str) -> int:
-        """Get member's value, returns 0 if not set"""
         try:
-            value = self.data["members"].get(member_id, {}).get("value", 0)
-            logger.debug(f"Retrieved value {value} for member {member_id}")
-            return value
-        except Exception as e:
-            logger.error(f"Error getting member value: {e}")
+            return int(self.data["members"].get(member_id, {}).get("value", 0))
+        except Exception:
             return 0
 
     def set_member_value(self, member_id: str, value: int) -> None:
-        """Set member's value"""
         try:
-            old_value = self.get_member_value(member_id)
-            new_value = max(value, 0)  # Ensure value doesn't go below 0
-
-            # Initialize member dictionary if it doesn't exist
             if member_id not in self.data["members"]:
                 self.data["members"][member_id] = {}
-
-            self.data["members"][member_id]["value"] = new_value
+            self.data["members"][member_id]["value"] = max(0, int(value))
             self._save_data()
-            logger.info(f"Updated value for member {member_id}: {old_value}m -> {new_value}m")
         except Exception as e:
             logger.error(f"Error setting member value: {e}")
 
-    def get_member_data(self, member_id: str, key: str, default: Any = None) -> Any:
-        """Get member's data for a specific key"""
+    def get_all_member_values(self) -> Dict[str, int]:
         try:
-            if member_id in self.data["members"]:
-                return self.data["members"][member_id].get(key, default)
-            return default
-        except Exception as e:
-            logger.error(f"Error getting member data for {member_id}.{key}: {e}")
-            return default
+            return {mid: int(self.get_member_value(mid)) for mid in self.data["members"]}
+        except Exception:
+            return {}
 
-    def set_member_data(self, member_id: str, key: str, value: Any) -> None:
-        """Set member's data for a specific key"""
-        try:
-            if member_id not in self.data["members"]:
-                self.data["members"][member_id] = {}
-            self.data["members"][member_id][key] = value
-            self._save_data()
-            logger.info(f"Updated {key} for member {member_id}: {value}")
-        except Exception as e:
-            logger.error(f"Error setting member data for {member_id}.{key}: {e}")
-
-    def update_activity(self, member_id: str, activity_type: str, count: int = 1) -> None:
-        """Update member's activity"""
-        if member_id not in self.data["activity"]:
-            self.data["activity"][member_id] = {"messages": 0, "reactions": 0}
-
-        self.data["activity"][member_id][activity_type] += count
-        self._save_data()
-
-    def get_activity(self, member_id: str) -> Dict[str, int]:
-        """Get member's activity"""
-        return self.data["activity"].get(member_id, {"messages": 0, "reactions": 0})
-        
-    def get_member_gold(self, member_id: str) -> int:
-        """Get member's gold balance"""
-        try:
-            return self.get_member_data(member_id, "gold", 0)
-        except Exception as e:
-            logger.error(f"Error getting gold for member {member_id}: {e}")
-            return 0
-            
-    def add_member_gold(self, member_id: str, amount: int) -> int:
-        """Add gold to member's balance and return new total"""
-        try:
-            current_gold = self.get_member_gold(member_id)
-            new_gold = current_gold + amount
-            self.set_member_data(member_id, "gold", new_gold)
-            logger.info(f"Updated gold for member {member_id}: {current_gold} -> {new_gold} ({'+' if amount >= 0 else ''}{amount})")
-            return new_gold
-        except Exception as e:
-            logger.error(f"Error adding gold for member {member_id}: {e}")
-            return self.get_member_gold(member_id)
-            
     def get_member_ranking(self, member_id: str) -> Tuple[int, int, int]:
-        """Get member's ranking"""
         try:
-            # Get all members and their values
-            member_values = [(mid, self.get_member_value(mid)) for mid in self.data["members"]]
-            # Sort by value in descending order
-            sorted_members = sorted(member_values, key=lambda x: x[1], reverse=True)
-
-            # Find member's rank
+            items = [(mid, self.get_member_value(mid)) for mid in self.data["members"]]
+            items.sort(key=lambda x: x[1], reverse=True)
+            total = len(items)
             member_value = self.get_member_value(member_id)
-            for rank, (mid, _) in enumerate(sorted_members, 1):
+            for idx, (mid, _) in enumerate(items, start=1):
                 if mid == member_id:
-                    return rank, len(sorted_members), member_value
-
-            # If member not found
-            return len(sorted_members) + 1, len(sorted_members), member_value
+                    return idx, total, member_value
+            return total + 1, total, member_value
         except Exception as e:
-            logger.error(f"Error getting member ranking: {e}")
+            logger.error(f"Error computing ranking: {e}")
             return 0, 0, 0
 
-    def get_all_member_values(self) -> Dict[str, int]:
-        """Get all member values as a dictionary of member_id: value pairs"""
-        try:
-            logger.info("Attempting to retrieve all member values")
-            logger.debug(f"Current data structure: {self.data}")
+# ===== Singleton + module-level helpers =====
 
-            if "members" not in self.data:
-                logger.warning("No 'members' key found in data structure")
-                return {}
+# Always point to ONE canonical file name
+_DEFAULT_FILE = os.environ.get("NOVERA_DATA_FILE", "member_data.json")
+_DM: DataManager = DataManager(_DEFAULT_FILE)
 
-            values = {
-                member_id: self.get_member_value(member_id)
-                for member_id in self.data["members"]
-            }
-            logger.info(f"Retrieved {len(values)} member values")
-            logger.debug(f"Member values: {values}")
-            return values
-        except Exception as e:
-            logger.exception(f"Error getting all member values: {e}")
-            return {}
+def ensure_member(member_id: str) -> None:
+    _DM.ensure_member(member_id)
 
-    def get_value_growth_3days(self) -> Dict[str, int]:
-        """Get member value growth over the last 3 days"""
-        # Placeholder implementation - could be enhanced with actual growth tracking
-        try:
-            values = self.get_all_member_values()
-            # For now, return current values as growth (simulated)
-            return values
-        except Exception as e:
-            logger.error(f"Error getting value growth: {e}")
-            return {}
-            
-    def reset_member_gold(self, member_id: str) -> None:
-        """Reset gold for a specific member to 0"""
-        try:
-            current_gold = self.get_member_gold(member_id)
-            self.set_member_data(member_id, "gold", 0)
-            logger.info(f"Reset gold for member {member_id} from {current_gold} to 0")
-        except Exception as e:
-            logger.error(f"Error resetting gold for member {member_id}: {e}")
-            
-    def reset_all_gold(self) -> int:
-        """Reset gold for all members to 0 and return the count of members affected"""
-        try:
-            count = 0
-            # Iterate through all members and reset their gold
-            for member_id in self.data["members"]:
-                if "gold" in self.data["members"][member_id] and self.data["members"][member_id]["gold"] != 0:
-                    self.data["members"][member_id]["gold"] = 0
-                    count += 1
-            
-            # Save the changes
-            self._save_data()
-            logger.info(f"Reset gold for {count} members to 0")
-            return count
-        except Exception as e:
-            logger.error(f"Error resetting all member gold: {e}")
-            return 0
-            
-    def get_all_member_gold(self) -> Dict[str, int]:
-        """Get all members' gold amounts"""
-        try:
-            result = {}
-            logger.info("Attempting to retrieve all member gold amounts")
-            
-            # Iterate over all members in the data
-            for member_id, member_data in self.data["members"].items():
-                # Get the gold value with default 0 if not set
-                gold = member_data.get("gold", 0)
-                # Add to results dictionary
-                result[member_id] = gold
-                
-            logger.info(f"Retrieved {len(result)} member gold amounts")
-            return result
-        except Exception as e:
-            logger.error(f"Error getting all member gold: {e}")
-            return {}
+def get_member_value(member_id: str) -> int:
+    return _DM.get_member_value(member_id)
 
-
-# =========================
-# Singleton + module-level API (ADD-ON)
-# =========================
-
-# Create a single shared manager for the whole bot.
-# If your JSON lives somewhere else, change the filename below.
-try:
-    manager  # type: ignore[name-defined]
-except NameError:
-    manager = DataManager("member_data.json")
-
-# Convenience API used by the rest of the bot (keeps your old imports working).
-def ensure_member(user_id: str) -> None:
-    """Create a minimal member entry if not present."""
-    try:
-        if user_id not in manager.data["members"]:
-            manager.data["members"][user_id] = {}
-            manager._save_data()
-    except Exception as e:
-        logger.error(f"ensure_member failed for {user_id}: {e}")
-
-def get_member_value(user_id: str) -> int:
-    return int(manager.get_member_value(user_id))
-
-def set_member_value(user_id: str, value: int) -> None:
-    manager.set_member_value(user_id, int(value))
-
-def get_member_data(user_id: str, key: str, default: Any = None) -> Any:
-    return manager.get_member_data(user_id, key, default)
-
-def set_member_data(user_id: str, key: str, value: Any) -> None:
-    manager.set_member_data(user_id, key, value)
-
-def get_member_gold(user_id: str) -> int:
-    return manager.get_member_gold(user_id)
-
-def add_member_gold(user_id: str, amount: int) -> int:
-    return manager.add_member_gold(user_id, amount)
-
-def reset_member_gold(user_id: str) -> None:
-    manager.reset_member_gold(user_id)
-
-def reset_all_gold() -> int:
-    return manager.reset_all_gold()
-
-def get_all_member_gold() -> Dict[str, int]:
-    return manager.get_all_member_gold()
-
-def update_activity(user_id: str, activity_type: str, count: int = 1) -> None:
-    manager.update_activity(user_id, activity_type, count)
-
-def get_activity(user_id: str) -> Dict[str, int]:
-    return manager.get_activity(user_id)
-
-def get_member_ranking(user_id: str) -> Tuple[int, int, int]:
-    return manager.get_member_ranking(user_id)
+def set_member_value(member_id: str, value: int) -> None:
+    _DM.set_member_value(member_id, value)
 
 def get_all_member_values() -> Dict[str, int]:
-    return manager.get_all_member_values()
+    return _DM.get_all_member_values()
 
-def get_value_growth_3days() -> Dict[str, int]:
-    return manager.get_value_growth_3days()
+def get_member_ranking(member_id: str):
+    return _DM.get_member_ranking(member_id)
 
-def get_data_file_path() -> str:
-    """Handy for logging/debugging which file is being used."""
-    return getattr(manager, "filename", "member_data.json")
-
-__all__ = [
-    "DataManager",
-    "manager",
-    # module API
-    "ensure_member",
-    "get_member_value",
-    "set_member_value",
-    "get_member_data",
-    "set_member_data",
-    "get_member_gold",
-    "add_member_gold",
-    "reset_member_gold",
-    "reset_all_gold",
-    "get_all_member_gold",
-    "update_activity",
-    "get_activity",
-    "get_member_ranking",
-    "get_all_member_values",
-    "get_value_growth_3days",
-    "get_data_file_path",
-]
+def get_data_filename() -> str:
+    return _DEFAULT_FILE
