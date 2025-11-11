@@ -1218,14 +1218,14 @@ async def on_ready():
     if not update_heartbeat.is_running():
         update_heartbeat.start()
 
-@bot.command(name="checkvalue")
-    # Install safe shutdown handler (flush member_data.json on SIGTERM/SIGINT)
-    try:
-        _install_shutdown_handler(bot.loop)
-        logging.info("Shutdown handler installed")
-    except Exception as e:
-        logging.error(f"Failed to install shutdown handler: {e}")
+# Install safe shutdown handler (flush member_data.json on SIGTERM/SIGINT)
+try:
+    _install_shutdown_handler(bot.loop)
+    logging.info("Shutdown handler installed")
+except Exception as e:
+    logging.error(f"Failed to install shutdown handler: {e}")
 
+@bot.command(name="checkvalue")
 async def checkvalue_command(ctx, member: Optional[discord.Member] = None):
     """Check the user's value from the data manager"""
     logging.info(f"Processing checkvalue command for message ID {ctx.message.id}")
