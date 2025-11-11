@@ -1,31 +1,51 @@
-
+from __future__ import annotations
 import discord
 from discord.ext import commands
+import random
 
+# ------------- mommy-vibe text -------------
+TITLE_VARIANTS = [
+    "💕 Mommy’s Command List",
+    "✨ Novera Help – Mommy’s Guide",
+    "💋 Need help, sweetie?",
+    "🎀 Mommy’s here to explain~"
+]
+DESC_VARIANTS = [
+    "Pick a topic and Mommy will show you the commands~ 💖",
+    "Lost? Let Mommy hold your hand~ 💕",
+    "Choose what you wanna learn, darling~ ✨"
+]
+CATEGORY_VARIANTS = [
+    "Let’s look at **{cat}** commands, cutie~",
+    "Mommy gathered the **{cat}** commands for you~ 💕",
+    "Here are the **{cat}** things you can do, sweetie~"
+]
+
+# ------------- real command list -------------
 PUBLIC_CATEGORIES = {
     "General": ["help", "value", "activity", "rankings"],
-    "Match": ["match", "matchresult", "matchcancel", "anteup"],
-    "Fun": ["spank", "headpat", "spill", "shopping", "tipjar", "confess"]
+    "Wagers":  ["anteup"],
+    "Fun":     ["spank", "headpat", "spill", "shopping", "tipjar", "confess"]
 }
-
-HIDE_COMMANDS = {"eval", "getevaluated", "tryoutsresults", "tryoutresults"}
+HIDE_COMMANDS = {"eval", "getevaluated", "tryoutsresults", "tryoutresults", "match", "matchresult", "matchcancel"}
 
 DESCRIPTIONS = {
-    "help": "Show this help menu",
-    "value": "Check your value or someone else's",
-    "activity": "See your activity",
-    "rankings": "Top players by value",
-    "match": "Create a new match",
-    "matchresult": "Report match results",
-    "matchcancel": "Cancel a match you created",
-    "anteup": "Join an existing match",
-    "spank": "Playful spank",
-    "headpat": "Give a headpat",
-    "spill": "Get the tea",
-    "shopping": "See Mommy's purchases",
-    "tipjar": "Check Mommy's special fund",
-    "confess": "Make Mommy confess"
+    "help":     "Mommy shows you all the commands~ 💕",
+    "value":    "Check your value or someone else’s 💰",
+    "activity": "See how active you’ve been 📊",
+    "rankings": "Top valued players leaderboard 👑",
+    "anteup":   "Create or join a wager duel 💴",
+    "spank":    "Playful spank ~ 👋",
+    "headpat":  "Give someone a headpat 💖",
+    "spill":    "Get the latest tea ☕",
+    "shopping": "See Mommy’s purchases 🛍️",
+    "tipjar":   "Check Mommy’s special fund 🪙",
+    "confess":  "Make Mommy confess her secrets 💋"
 }
+
+# ------------- embed colours -------------
+PINK  = 0xf47fff
+NEON  = 0xff00ff
 
 class HelpPublic(commands.Cog):
     def __init__(self, bot):
@@ -33,54 +53,73 @@ class HelpPublic(commands.Cog):
 
     @commands.command(name="help")
     async def help_cmd(self, ctx, category: str | None = None):
-        # Build a fancy embed with dropdown
+        """Mommy’s help menu~"""
         if category:
             cat = category.capitalize()
             cmds = PUBLIC_CATEGORIES.get(cat)
             if not cmds:
-                return await ctx.send(f"Unknown category `{category}`.")
-            embed = discord.Embed(
-                title=f"📖 Novera Help — {cat}",
-                color=discord.Color.blurple(),
-                description="Click the buttons below or type the commands."
-            )
+                embed = discord.Embed(
+                    title="😔 Mommy doesn’t know that category…",
+                    description=f"Try one of these: {', '.join(PUBLIC_CATEGORIES)}",
+                    color=PINK
+                )
+                return await ctx.send(embed=embed)
+
+            title = f"💕 {cat} Commands"
+            desc  = random.choice(CATEGORY_VARIANTS).format(cat=cat)
+            embed = discord.Embed(title=title, description=desc, color=NEON)
             for c in cmds:
                 if c in HIDE_COMMANDS:
                     continue
-                desc = DESCRIPTIONS.get(c, "—")
-                embed.add_field(name=f"`!{c}`", value=desc, inline=False)
+                embed.add_field(
+                    name=f"**!{c}**  {DESCRIPTIONS.get(c, '—')}",
+                    value="\u200b",
+                    inline=False
+                )
+            embed.set_footer(text="Need more? Ask Mommy anytime~ 💖")
             return await ctx.send(embed=embed)
 
         # main menu
-        embed = discord.Embed(
-            title="📖 Novera Help",
-            description="Pick a category to see commands.\nYou can also type `!help <category>`.",
-            color=discord.Color.blurple()
-        )
+        title = random.choice(TITLE_VARIANTS)
+        desc  = random.choice(DESC_VARIANTS)
+        embed = discord.Embed(title=title, description=desc, color=PINK)
         for cat, cmds in PUBLIC_CATEGORIES.items():
-            count = len([c for c in cmds if c not in HIDE_COMMANDS])
-            embed.add_field(name=f"**{cat}**", value=f"{count} commands", inline=True)
+            visible = [c for c in cmds if c not in HIDE_COMMANDS]
+            if not visible:
+                continue
+            emoji = {"General": "📖", "Wagers": "💴", "Fun": "🎀"}.get(cat, "✨")
+            embed.add_field(
+                name=f"{emoji} **{cat}** ({len(visible)} commands)",
+                value=", ".join(f"`{c}`" for c in visible),
+                inline=False
+            )
+        embed.set_thumbnail(url=self.bot.user.display_avatar.url)
+        embed.set_footer(text="Choose a category below or type !help <category> ~ Mommy’s watching 💕")
 
         class CatView(discord.ui.View):
             def __init__(self):
                 super().__init__(timeout=60)
-                options=[]
-                for cat in PUBLIC_CATEGORIES:
-                    options.append(discord.SelectOption(label=cat, description=f"Show {cat} commands"))
-                self.select = discord.ui.Select(placeholder="Choose category…", options=options)
-                self.select.callback = self.on_select
-                self.add_item(self.select)
+                opts = [
+                    discord.SelectOption(label=cat, emoji={"General": "📖", "Wagers": "💴", "Fun": "🎀"}.get(cat),
+                                         description=f"Show {cat} commands")
+                    for cat in PUBLIC_CATEGORIES
+                ]
+                select = discord.ui.Select(placeholder="Pick a topic…", options=opts)
+                select.callback = self.on_select
+                self.add_item(select)
+
             async def on_select(self, interaction: discord.Interaction):
-                cat = self.select.values[0]
+                cat = interaction.data["values"][0]
                 cmds = PUBLIC_CATEGORIES[cat]
+                visible = [c for c in cmds if c not in HIDE_COMMANDS]
                 e = discord.Embed(
-                    title=f"📖 Novera Help — {cat}",
-                    color=discord.Color.blurple()
+                    title=f"💕 {cat} Commands",
+                    description=random.choice(CATEGORY_VARIANTS).format(cat=cat),
+                    color=NEON
                 )
-                for c in cmds:
-                    if c in HIDE_COMMANDS:
-                        continue
-                    e.add_field(name=f"`!{c}`", value=DESCRIPTIONS.get(c, "—"), inline=False)
+                for c in visible:
+                    e.add_field(name=f"**!{c}**", value=DESCRIPTIONS.get(c, "—"), inline=False)
+                e.set_footer(text="Mommy’s always here if you need more help~ 💖")
                 await interaction.response.edit_message(embed=e, view=self)
 
         await ctx.send(embed=embed, view=CatView())
