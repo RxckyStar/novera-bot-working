@@ -73,6 +73,7 @@ from profanity_filter import ProfanityFilter
 import moderation_tooltips  # Import our new moderation tooltips module
 import importlib
 import loading_animations
+from data_manager import data_manager
 
 # Import proper connection error handling for Discord.py websocket connections
 # Discord.py 2.0+ uses discord.errors.ConnectionClosed
