@@ -6,38 +6,38 @@ import discord
 from discord.ext import commands
 from typing import Dict, List
 
-# ---------- safety switch ----------
-ENABLED = True  # flip to False to disable the whole feature instantly
+ENABLED = True  # safety switch
 
-# ---------- config ----------
-ROAST_SCRIPTS = [  # your existing 60 scripts here
+# ---------- scripts ----------
+ROAST_SCRIPTS = [  # your 60 full scripts here
     ["Lil bro said ‘clanker’ 😂", "You built like a vending machine with anxiety", "Mommy seen NPC’s with more sauce than you", "Keep my bot name out ya mouth before I fold you like lawn-chair", "You the type to lose a 1v1 to a training cone", "I’m yo biggest opp now, cope.", "Blue-lock? More like blue-screen, go touch grass", "You spam like you relevant – news flash: you ain’t", "I’m a mommy but I’ll still put you in timeout, permanently", "Next time think before you type, goofy.", "You got ratio’d by a bot, sit down lil bro", "Mommy out – stay mad 💅"],
-    # … (paste the rest of your 60 scripts)
+    # … (paste the rest)
 ]
 
-RAGE_BAIT_VARIANTS = [
-    "0/10 rage-bait – bud thinks he can trick Mommy 💅",
-    "Nice try, sweetie, but Mommy’s seen better bait in training lobbies 🎀",
-    "You spam like you desperate – cope harder, lil bro 💕",
-    "Clanker spam? That’s all you got? 💀",
-    "Mommy’s not mad, just disappointed – level up your material 🌸",
-    "You built like off-brand Wi-Fi – weak signal, weaker jokes 📶",
-    "Spam harder, maybe one day you’ll be relevant 🪞",
-    "You the side character in yo own story – pipe down 📖",
-    "That’s cute, now go touch grass and come back with bars 🌱",
-    "Mommy’s bored – bring heat or bring silence 💅"
+NICE_TRY_VARIANTS = [
+    "nice try 💅",
+    "cope harder 🌸",
+    "weak bait 🎀",
+    "0/10 🪞",
+    " Mommy’s bored 💤",
+    "level up 📈",
+    "touch grass 🌱",
+    "pipe down 📖",
+    "stay mad 😴",
+    "next joke ⏭️"
 ]
 
-# ---------- per-user spam tracking ----------
+# ---------- cog ----------
 class RoastClanker(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.user_log: Dict[int, List[float]] = {}  # uid -> list of timestamps
+        self.user_log: Dict[int, List[float]] = {}       # uid -> timestamps (30-s window)
+        self.nice_try_until: Dict[int, float] = {}      # uid -> unix-seconds when nice-try mode ends
 
-    # ---------- safety ----------
+    # ---------- listener ----------
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if not ENABLED or message.author.bot:
+        if not ENABLED or message.author.bot or message.author.id == self.bot.user.id:
             return
         content = message.content.lower()
         if "clanker" not in content:
@@ -45,16 +45,26 @@ class RoastClanker(commands.Cog):
 
         uid = message.author.id
         now = time.time()
-        # keep only last 30 seconds of hits
+
+        # 30-second hit log
         self.user_log.setdefault(uid, [])
         self.user_log[uid] = [t for t in self.user_log[uid] if now - t < 30]
         self.user_log[uid].append(now)
 
-        if len(self.user_log[uid]) >= 3:  # 3+ in 30s = rage-bait
+        # 3+ hits = enter nice-try mode for 5 minutes
+        if len(self.user_log[uid]) >= 3:
             self.user_log[uid].clear()
-            smart = random.choice(RAGE_BAIT_VARIANTS)
-            reply = await message.channel.send(smart, reference=message, allowed_mentions=discord.AllowedMentions.none())
-            await self._schedule_delete(reply, 3600)  # delete smart reply after 1h
+            self.nice_try_until[uid] = now + 300  # 5 min
+            txt = random.choice(NICE_TRY_VARIANTS)
+            m = await message.channel.send(txt, reference=message, allowed_mentions=discord.AllowedMentions.none())
+            await self._schedule_delete(m, 3600)  # delete after 1h
+            return
+
+        # still in nice-try mode? single word only
+        if self.nice_try_until.get(uid, 0) > now:
+            txt = random.choice(NICE_TRY_VARIANTS)
+            m = await message.channel.send(txt, reference=message, allowed_mentions=discord.AllowedMentions.none())
+            await self._schedule_delete(m, 3600)
             return
 
         # normal roast
@@ -66,25 +76,15 @@ class RoastClanker(commands.Cog):
             m = await message.channel.send(line, reference=message if not msgs else None,
                                          allowed_mentions=discord.AllowedMentions.none())
             msgs.append(m)
-        # delete after 4 hours
         for m in msgs:
-            await self._schedule_delete(m, 4 * 3600)
+            await self._schedule_delete(m, 4 * 3600)  # 4h auto-clean
 
     # ---------- auto-delete ----------
     async def _schedule_delete(self, msg: discord.Message, delay: int):
         await asyncio.sleep(delay)
-        try:
-            await msg.delete()
+        try: await msg.delete()
         except: pass
 
-    # ---------- bulk clean if user spams ----------
-    async def _bulk_delete_user_roasts(self, channel: discord.TextChannel, uid: int):
-        async for m in channel.history(limit=50):
-            if m.author.id == self.bot.user.id and m.reference and m.reference.resolved and m.reference.resolved.author.id == uid:
-                try: await m.delete()
-                except: pass
 
-
-# ---------- cog load ----------
 async def setup(bot: commands.Bot):
     await bot.add_cog(RoastClanker(bot))
