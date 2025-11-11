@@ -3,16 +3,28 @@
 - Exposes module-level functions used across the bot:
   get_member_value, set_member_value, get_member_ranking, get_all_member_values, ensure_member, etc.
 - ALWAYS writes/reads the SAME member_data.json so all commands are consistent.
+- Auto-commits to GitHub after every save so values survive Railway restarts.
 """
 
 from __future__ import annotations
-import json, os, shutil, logging
+import json, os, shutil, logging, subprocess
 from datetime import datetime
 from typing import Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
-# ===== Original class (kept; lightly refactored where needed) =====
+def _git_commit_push(filename: str) -> None:
+    """Auto-commit member_data.json to GitHub after every save."""
+    try:
+        os.system("git config user.name 'Novera-Bot'")
+        os.system("git config user.email 'bot@novera.com'")
+        subprocess.run(["git", "add", filename], check=True)
+        subprocess.run(["git", "commit", "-m", "auto-save values"], check=True)
+        subprocess.run(["git", "push"], check=True)
+        logger.info("Pushed member_data.json to GitHub")
+    except Exception as e:
+        logger.error(f"Git push failed: {e}")
+
 class DataManager:
     def __init__(self, filename: str):
         self.filename = filename
@@ -41,7 +53,6 @@ class DataManager:
             return {"members": {}, "activity": {}}
         except Exception as e:
             logger.exception(f"Error loading data file: {e}")
-            # Try last backup
             try:
                 backups = [f for f in os.listdir(".") if f.startswith(f"{self.filename}.") and f.endswith(".bak")]
                 if backups:
@@ -57,29 +68,26 @@ class DataManager:
                     return data
             except Exception as e2:
                 logger.error(f"Failed to restore from backup: {e2}")
-            # Fresh structure if restore failed
             return {"members": {}, "activity": {}}
 
     def _save_data(self) -> None:
         try:
-            # backup before save
             self._backup_data()
             with open(self.filename, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=4)
-                f.flush()            # ← force OS buffer
-                os.fsync(f.fileno()) # ← wait for physical write
+                f.flush()
+                os.fsync(f.fileno())
             logger.info(f"Saved data file with {len(self.data['members'])} members")
+            _git_commit_push(self.filename)   # ← auto-push to GitHub
         except Exception as e:
             logger.error(f"Error saving data: {e}")
 
-    # ---- members/value helpers ----
     def ensure_member(self, member_id: str) -> None:
         if member_id not in self.data["members"]:
             self.data["members"][member_id] = {"value": 0}
             self._save_data()
 
     def get_member_value(self, member_id: str) -> int:
-        # always load freshest file
         self.data = self._load_data()
         try:
             return int(self.data["members"].get(member_id, {}).get("value", 0))
@@ -115,10 +123,8 @@ class DataManager:
             logger.error(f"Error computing ranking: {e}")
             return 0, 0, 0
 
-# ===== Singleton + module-level helpers =====
-
-# Railway persistent mount point – change only this line
-_DEFAULT_FILE = os.environ.get("NOVERA_DATA_FILE", "/app/member_data.json")
+# ===== singleton =====
+_DEFAULT_FILE = os.environ.get("NOVERA_DATA_FILE", "member_data.json")
 _DM: DataManager = DataManager(_DEFAULT_FILE)
 
 def ensure_member(member_id: str) -> None:
