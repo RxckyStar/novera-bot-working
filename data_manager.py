@@ -1,4 +1,3 @@
-
 """Unified Data Manager (singleton + helpers)
 - Keeps your original DataManager class intact
 - Exposes module-level functions used across the bot:
@@ -34,8 +33,10 @@ class DataManager:
             if os.path.exists(self.filename):
                 with open(self.filename, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                if "members" not in data: data["members"] = {}
-                if "activity" not in data: data["activity"] = {}
+                if "members" not in data:
+                    data["members"] = {}
+                if "activity" not in data:
+                    data["activity"] = {}
                 return data
             return {"members": {}, "activity": {}}
         except Exception as e:
@@ -48,8 +49,10 @@ class DataManager:
                     shutil.copy2(most_recent, self.filename)
                     with open(self.filename, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                    if "members" not in data: data["members"] = {}
-                    if "activity" not in data: data["activity"] = {}
+                    if "members" not in data:
+                        data["members"] = {}
+                    if "activity" not in data:
+                        data["activity"] = {}
                     logger.info(f"Restored data from backup: {most_recent}")
                     return data
             except Exception as e2:
@@ -63,6 +66,8 @@ class DataManager:
             self._backup_data()
             with open(self.filename, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=4)
+                f.flush()            # ← force OS buffer
+                os.fsync(f.fileno()) # ← wait for physical write
             logger.info(f"Saved data file with {len(self.data['members'])} members")
         except Exception as e:
             logger.error(f"Error saving data: {e}")
@@ -74,6 +79,8 @@ class DataManager:
             self._save_data()
 
     def get_member_value(self, member_id: str) -> int:
+        # always load freshest file
+        self.data = self._load_data()
         try:
             return int(self.data["members"].get(member_id, {}).get("value", 0))
         except Exception:
