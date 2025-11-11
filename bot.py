@@ -6790,6 +6790,11 @@ async def on_ready():
         update_heartbeat.start()
         logging.info("Started heartbeat update task")
 
+    # --- NEW: remove duplicates that live in bot.py so cogs can register ---
+    bot.remove_command("addvalue")
+    bot.remove_command("help")
+    # ----------------------------------------------------------------------
+
     # Load all cogs
     cog_list = ("cogs.tryouts", "cogs.anteup", "cogs.value_admin", "cogs.help_public")
     for cog in cog_list:
