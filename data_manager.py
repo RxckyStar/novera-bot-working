@@ -74,7 +74,7 @@ class DataManager:
             self.cursor.execute('''
                 SELECT user_id, value FROM members
                 ORDER BY value DESC
-            '''')
+            ''')
             items = self.cursor.fetchall()
             total = len(items)
             member_value = self.get_member_value(member_id)
