@@ -10,12 +10,15 @@ CH_1V1 = 1351037569592328293
 CH_2V2 = 1351037618606964849
 CH_3V3 = 1351037659455295570
 CH_5V5 = 1351037705961607168
-MOD_CH   = 1351221346192982046
-AUTO_CLOSE_H = 4            # hours
+MOD_CH = 1351221346192982046
+PING_ROLE_ID = 1437677085026943058  # Role to ping when an ad is created
+AUTO_CLOSE_H = 4  # hours
+
 # ------------- constants ----------
 REGIONS = ["NA", "EU"]
-MODES   = ["1v1", "2v2", "3v3", "5v5"]
+MODES = ["1v1", "2v2", "3v3", "5v5"]
 POSITIONS_FULL = ["CF", "LW", "RW", "CM", "GK"]
+
 # mommy vibe variants
 MOMMY_DM_START = [
     "💋 Mommy’s ready to set your wager ad, sweetie~",
@@ -55,7 +58,7 @@ MOMMY_PICK_POS = [
 MOMMY_AD_NOTE = "📸 **Screenshot the final stats** – no proof = no payout!"
 MOMMY_AD_FOOTER = "Mommy’s watching~ Play fair and come back with proof! 💕"
 AD_TITLE_VARIANTS = [
-    "💴 Mommy’s Wager Board",
+    "💰 Mommy’s Wager Board",
     "💰 Novera Duel Listing",
     "💋 Ante-Up with Mommy"
 ]
@@ -64,6 +67,7 @@ AD_DESC_VARIANTS = [
     "Put your yen where your boots are, sweetie~",
     "Winner gets richer, loser learns~ Mommy’s rules 💕"
 ]
+
 # ------------- helpers -------------
 def mode_channel_map(bot: commands.Bot, mode: str):
     return {
@@ -84,7 +88,7 @@ def applicable_positions(mode: str) -> list[str]:
 class DMDuelSetup:
     def __init__(self, user: discord.User, bot: commands.Bot):
         self.user = user
-        self.bot   = bot
+        self.bot = bot
         self.mode: str | None = None
         self.region: str | None = None
         self.username: str | None = None
@@ -129,6 +133,7 @@ class DMDuelSetup:
         select = discord.ui.Select(placeholder="Choose…", options=options)
         view.add_item(select)
         chosen: str | None = None
+
         async def cb(inter: discord.Interaction):
             nonlocal chosen
             chosen = select.values[0]
@@ -147,8 +152,9 @@ class PositionButton(discord.ui.Button):
     def __init__(self, team: str, pos: str, mode: str):
         super().__init__(label=f"{team}:{pos}", style=discord.ButtonStyle.blurple)
         self.team = team
-        self.pos  = pos
+        self.pos = pos
         self.mode = mode
+
     async def callback(self, interaction: discord.Interaction):
         board: "TeamBoard" = self.view
         uid = interaction.user.id
@@ -163,19 +169,35 @@ class PositionButton(discord.ui.Button):
             await interaction.response.send_message("Position taken, cutie~", ephemeral=True)
             return
         tgt.append((uid, self.pos))
-        # cosmetic: pfp on button, disable, turn green
         user = interaction.user
         self.emoji = discord.PartialEmoji.from_str(user.display_avatar.url)
         self.disabled = True
-        self.style     = discord.ButtonStyle.success
-        self.label     = f"{user.display_name}"
+        self.style = discord.ButtonStyle.success
+        self.label = f"{user.display_name}"
         await interaction.response.defer()
         await board._refresh_embed()
         await board._check_full()
 
+class LeaveButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Leave Position", style=discord.ButtonStyle.danger)
+
+    async def callback(self, interaction: discord.Interaction):
+        board: "TeamBoard" = self.view
+        uid = interaction.user.id
+        if uid in [u for u, _ in board.teamA]:
+            board.teamA = [(u, p) for u, p in board.teamA if u != uid]
+        elif uid in [u for u, _ in board.teamB]:
+            board.teamB = [(u, p) for u, p in board.teamB if u != uid]
+        else:
+            await interaction.response.send_message("You don't have a position to leave, sweetie~ 💕", ephemeral=True)
+            return
+        await interaction.response.defer()
+        await board._refresh_embed()
+
 class TeamBoard(discord.ui.View):
     def __init__(self, creator_id: int, mode: str, region: str, username: str, ps_link: str, stake_m: int):
-        super().__init__(timeout=AUTO_CLOSE_H*3600)   # 4 h auto-close
+        super().__init__(timeout=AUTO_CLOSE_H * 3600)  # 4 h auto-close
         self.creator_id = creator_id
         self.mode = mode
         self.region = region
@@ -191,15 +213,15 @@ class TeamBoard(discord.ui.View):
 
     def _build_grid(self):
         positions = applicable_positions(self.mode)
-        # grid:  A-row  vs  B-row   (5v5 full, smaller modes fewer)
         for pos in positions:
             self.add_item(PositionButton("A", pos, self.mode))
         for pos in positions:
             self.add_item(PositionButton("B", pos, self.mode))
+        self.add_item(LeaveButton())
 
     def _start_auto_close(self):
         async def _close():
-            await asyncio.sleep(AUTO_CLOSE_H*3600)
+            await asyncio.sleep(AUTO_CLOSE_H * 3600)
             if self.message:
                 try:
                     await self.message.edit(content="💤 **Ad expired** – Mommy closed it after 4 hours.", embed=None, view=None)
@@ -214,7 +236,7 @@ class TeamBoard(discord.ui.View):
 
     def _build_embed(self) -> discord.Embed:
         title = random.choice(AD_TITLE_VARIANTS)
-        desc  = random.choice(AD_DESC_VARIANTS) + f"\n**Mode:** {self.mode} • **Region:** {self.region} • **Stake:** ¥{self.stake_m}M per player\n**Creator:** <@{self.creator_id}> • **Username:** {self.username}\n" + (f"**PS Link:** {self.ps_link}\n" if self.ps_link else "") + f"\n{MOMMY_AD_NOTE}"
+        desc = random.choice(AD_DESC_VARIANTS) + f"\n**Mode:** {self.mode} • **Region:** {self.region} • **Stake:** ¥{self.stake_m}M per player\n**Creator:** <@{self.creator_id}> • **Username:** {self.username}\n" + (f"**PS Link:** {self.ps_link}\n" if self.ps_link else "") + f"\n{MOMMY_AD_NOTE}"
         emb = discord.Embed(title=title, description=desc, color=discord.Color.gold())
         def fmt(team):
             if not team: return "—"
@@ -233,14 +255,12 @@ class TeamBoard(discord.ui.View):
                     dm = await user.create_dm()
                     await dm.send("💋 Match is ready! Play your game, **screenshot the final stats**, then use the button on the ad to submit.")
                 except: pass
-            # add **players-only** result button
             btn = discord.ui.Button(label="Submit Match Result", style=discord.ButtonStyle.success, emoji="📸")
             btn.callback = self._open_result_modal
             self.add_item(btn)
             await self._refresh_embed()
 
     async def _open_result_modal(self, interaction: discord.Interaction):
-        # only players can click
         if interaction.user.id not in [u for u, _ in self.teamA + self.teamB]:
             await interaction.response.send_message("Only players in this match can submit, sweetie~", ephemeral=True)
             return
@@ -252,7 +272,7 @@ class ResultModal(discord.ui.Modal, title="Match Result"):
         super().__init__()
         self.board = board
     proof_url = discord.ui.TextInput(label="Screenshot URL (final stats)", placeholder="https://...", required=True)
-    winner    = discord.ui.TextInput(label="Which team won? (A or B)", placeholder="A", required=True, min_length=1, max_length=1)
+    winner = discord.ui.TextInput(label="Which team won? (A or B)", placeholder="A", required=True, min_length=1, max_length=1)
 
     async def on_submit(self, interaction: discord.Interaction):
         winner = self.winner.value.strip().upper()
@@ -292,16 +312,23 @@ class ModApproveView(discord.ui.View):
 
     async def _settle(self, inter: discord.Interaction):
         winners = self.board.teamA if self.winner == "A" else self.board.teamB
-        losers  = self.board.teamB if self.winner == "A" else self.board.teamA
+        losers = self.board.teamB if self.winner == "A" else self.board.teamA
         stake = int(self.board.stake_m)
         try:
             for uid, _ in winners:
                 old = data_manager.get_member_value(str(uid))
-                data_manager.set_member_value(str(uid), old + stake)
+                data_manager.set_member_value(str(uid), old + stake * len(losers))
             for uid, _ in losers:
                 old = data_manager.get_member_value(str(uid))
-                data_manager.set_member_value(str(uid), max(0, old - stake))
+                data_manager.set_member_value(str(uid), max(0, old - stake * len(winners)))
             await inter.response.send_message("✅ Values updated – winners paid, losers debited.", ephemeral=True)
+            # Notify players
+            for uid, _ in self.board.teamA + self.board.teamB:
+                user = await self.board.message.guild.fetch_member(uid)
+                try:
+                    dm = await user.create_dm()
+                    await dm.send("✅ Your match result has been approved by the mods!")
+                except: pass
         except Exception as e:
             await inter.response.send_message(f"Error updating values: {e}", ephemeral=True)
 
@@ -331,7 +358,7 @@ class AnteUp(commands.Cog):
             board.teamA.append((user.id, position))
 
             embed = board._build_embed()
-            msg = await ch.send(embed=embed, view=board)
+            msg = await ch.send(content=f"<@&{PING_ROLE_ID}>", embed=embed, view=board)
             board.message = msg
 
             await ctx.send(random.choice(MOMMY_CHECK_DMS), mention_author=False)
