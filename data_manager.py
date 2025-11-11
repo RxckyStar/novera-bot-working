@@ -6,11 +6,18 @@ from typing import Dict, Tuple
 logger = logging.getLogger(__name__)
 
 class DataManager:
-    def __init__(self, db_path: str) -> None:
-        os.makedirs(db_path, exist_ok=True)          # ensure folder exists
-        self.db_file = os.path.join(db_path, "bot.db")
-        self.conn = sqlite3.connect(self.db_file, check_same_thread=False)
-        self.conn.execute("PRAGMA journal_mode=WAL") # safer concurrent access
+    def __init__(self) -> None:
+        # Runtime resolution of the mount path
+        mount = os.getenv("SQLITE3_RAILWAY_VOLUME_MOUNT_PATH") or os.getenv("SQLITE3.RAILWAY_VOLUME_MOUNT_PATH")
+        if mount:
+            os.makedirs(mount, exist_ok=True)
+            db_file = os.path.join(mount, "bot.db")
+            logger.info(f"Using persistent SQLite at {db_file}")
+        else:
+            db_file = ":memory:"  # fallback for builds / local dev
+            logger.warning("SQLite mount path not found – using in-memory DB (data will NOT persist)")
+        self.conn = sqlite3.connect(db_file, check_same_thread=False)
+        self.conn.execute("PRAGMA journal_mode=WAL")
         self._init_table()
 
     def _init_table(self) -> None:
@@ -48,11 +55,7 @@ class DataManager:
         return total + 1, total, user_val
 
 # ---------- singleton ----------
-_MOUNT_PATH = os.getenv("SQLITE3_RAILWAY_VOLUME_MOUNT_PATH") or os.getenv("SQLITE3.RAILWAY_VOLUME_MOUNT_PATH")
-if not _MOUNT_PATH:
-    raise RuntimeError("SQLite volume mount path not found in env vars")
-
-_DM = DataManager(_MOUNT_PATH)
+_DM = DataManager()
 
 # ---------- public API ----------
 def ensure_member(uid: str) -> None:
@@ -71,4 +74,4 @@ def get_member_ranking(uid: str) -> Tuple[int, int, int]:
     return _DM.get_member_ranking(uid)
 
 def get_data_filename() -> str:
-    return _DM.db_file
+    return getattr(_DM.conn, "filename", ":memory:")
