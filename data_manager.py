@@ -92,7 +92,7 @@ class DataManager:
 # Get the SQLite database path from the environment variable
 DATABASE_PATH = os.getenv('SQLITE3.RAILWAY_VOLUME_MOUNT_PATH')
 if not DATABASE_PATH:
-    logger.error("SQLITE3.RAILWAY_VOLUME_MOUNT_PATH environment variable is not set.")
+    raise EnvironmentError("SQLITE3.RAILWAY_VOLUME_MOUNT_PATH environment variable is not set.")
 else:
     logger.info(f"Using database path: {DATABASE_PATH}")
 
