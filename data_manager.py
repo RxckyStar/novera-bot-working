@@ -1,117 +1,78 @@
-"""Unified Data Manager (singleton + helpers)
-- Keeps your original DataManager class intact
-- Exposes module-level functions used across the bot:
-  get_member_value, set_member_value, get_member_ranking, get_all_member_values, ensure_member, etc.
-- ALWAYS writes/reads the SAME member_data.json so all commands are consistent.
-- Git-auto-push disabled – Railway container has no git; values stay in container.
-"""
-
-from __future__ import annotations
-import json
+import sqlite3
 import os
-import shutil
 import logging
-from datetime import datetime
 from typing import Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
-
 class DataManager:
-    def __init__(self, filename: str) -> None:
-        self.filename = filename
-        self._backup_data()
-        self.data = self._load_data()
+    def __init__(self, db_url: str):
+        self.db_url = db_url
+        self._initialize_db()
 
-    # ---------- internal helpers ----------
-    def _backup_data(self) -> None:
-        if os.path.exists(self.filename):
-            backup_name = f"{self.filename}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
-            try:
-                shutil.copy2(self.filename, backup_name)
-                logger.info(f"Created backup of data file: {backup_name}")
-            except Exception as e:
-                logger.error(f"Failed to create backup: {e}")
-
-    def _load_data(self) -> Dict[str, Any]:
+    def _initialize_db(self):
         try:
-            if os.path.exists(self.filename):
-                with open(self.filename, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if "members" not in data:
-                    data["members"] = {}
-                if "activity" not in data:
-                    data["activity"] = {}
-                return data
-            return {"members": {}, "activity": {}}
+            self.conn = sqlite3.connect(self.db_url)
+            self.cursor = self.conn.cursor()
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS members (
+                    user_id TEXT PRIMARY KEY,
+                    value INTEGER
+                )
+            ''')
+            self.conn.commit()
         except Exception as e:
-            logger.exception(f"Error loading data file: {e}")
-            # try to restore from newest backup
-            try:
-                backups = [
-                    f for f in os.listdir(".")
-                    if f.startswith(f"{self.filename}.") and f.endswith(".bak")
-                ]
-                if backups:
-                    most_recent = max(backups)
-                    shutil.copy2(most_recent, self.filename)
-                    with open(self.filename, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    if "members" not in data:
-                        data["members"] = {}
-                    if "activity" not in data:
-                        data["activity"] = {}
-                    logger.info(f"Restored data from backup: {most_recent}")
-                    return data
-            except Exception as e2:
-                logger.error(f"Failed to restore from backup: {e2}")
-            # fall back to empty structure
-            return {"members": {}, "activity": {}}
+            logger.error(f"Error initializing database: {e}")
 
-    def _save_data(self) -> None:
+    def ensure_member(self, member_id: str):
         try:
-            self._backup_data()
-            with open(self.filename, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=4)
-                f.flush()
-                os.fsync(f.fileno())
-            logger.info(f"Saved data file with {len(self.data['members'])} members")
-            # Git-auto-push disabled – Railway has no git binary
+            self.cursor.execute('''
+                INSERT OR IGNORE INTO members (user_id, value)
+                VALUES (?, 0)
+            ''', (member_id,))
+            self.conn.commit()
         except Exception as e:
-            logger.error(f"Error saving data: {e}")
-
-    # ---------- public helpers ----------
-    def ensure_member(self, member_id: str) -> None:
-        if member_id not in self.data["members"]:
-            self.data["members"][member_id] = {"value": 0}
-            self._save_data()
+            logger.error(f"Error ensuring member: {e}")
 
     def get_member_value(self, member_id: str) -> int:
-        self.data = self._load_data()  # always fresh
         try:
-            return int(self.data["members"].get(member_id, {}).get("value", 0))
-        except Exception:
+            self.cursor.execute('''
+                SELECT value FROM members
+                WHERE user_id = ?
+            ''', (member_id,))
+            result = self.cursor.fetchone()
+            return result[0] if result else 0
+        except Exception as e:
+            logger.error(f"Error getting member value: {e}")
             return 0
 
-    def set_member_value(self, member_id: str, value: int) -> None:
+    def set_member_value(self, member_id: str, value: int):
         try:
-            if member_id not in self.data["members"]:
-                self.data["members"][member_id] = {}
-            self.data["members"][member_id]["value"] = max(0, int(value))
-            self._save_data()
+            self.cursor.execute('''
+                INSERT OR REPLACE INTO members (user_id, value)
+                VALUES (?, ?)
+            ''', (member_id, value))
+            self.conn.commit()
         except Exception as e:
             logger.error(f"Error setting member value: {e}")
 
     def get_all_member_values(self) -> Dict[str, int]:
         try:
-            return {mid: int(self.get_member_value(mid)) for mid in self.data["members"]}
-        except Exception:
+            self.cursor.execute('''
+                SELECT user_id, value FROM members
+            ''')
+            return {row[0]: row[1] for row in self.cursor.fetchall()}
+        except Exception as e:
+            logger.error(f"Error getting all member values: {e}")
             return {}
 
     def get_member_ranking(self, member_id: str) -> Tuple[int, int, int]:
         try:
-            items = [(mid, self.get_member_value(mid)) for mid in self.data["members"]]
-            items.sort(key=lambda x: x[1], reverse=True)
+            self.cursor.execute('''
+                SELECT user_id, value FROM members
+                ORDER BY value DESC
+            ''')
+            items = self.cursor.fetchall()
             total = len(items)
             member_value = self.get_member_value(member_id)
             for idx, (mid, _) in enumerate(items, start=1):
@@ -122,12 +83,11 @@ class DataManager:
             logger.error(f"Error computing ranking: {e}")
             return 0, 0, 0
 
+# Initialize the DataManager with the DATABASE_URL from Railway
+DATABASE_URL = os.getenv('DATABASE_URL')
+_DM = DataManager(DATABASE_URL)
 
-# ---------- singleton ----------
-_DEFAULT_FILE = os.environ.get("NOVERA_DATA_FILE", "member_data.json")
-_DM: DataManager = DataManager(_DEFAULT_FILE)
-
-# ---------- module-level helpers ----------
+# Module-level helpers
 def ensure_member(member_id: str) -> None:
     _DM.ensure_member(member_id)
 
@@ -140,8 +100,8 @@ def set_member_value(member_id: str, value: int) -> None:
 def get_all_member_values() -> Dict[str, int]:
     return _DM.get_all_member_values()
 
-def get_member_ranking(member_id: str):
+def get_member_ranking(member_id: str) -> Tuple[int, int, int]:
     return _DM.get_member_ranking(member_id)
 
 def get_data_filename() -> str:
-    return _DEFAULT_FILE
+    return DATABASE_URL
