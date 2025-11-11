@@ -84,7 +84,6 @@ def applicable_positions(mode: str) -> list[str]:
         return ["CF", "LW", "RW", "CM"]
     return POSITIONS_FULL
 
-
 # ------------- compact DM flow -------------
 class DMDuelSetup:
     def __init__(self, user: discord.User, bot: commands.Bot):
@@ -164,7 +163,6 @@ class DMDuelSetup:
             pass
         return chosen
 
-
 # ------------- sexy grid view -------------
 class PositionButton(discord.ui.Button):
     def __init__(self, team: str, pos: str, mode: str):
@@ -199,7 +197,6 @@ class PositionButton(discord.ui.Button):
         await board._refresh_embed()
         await board._check_full()
 
-
 class LeaveButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Leave Position", style=discord.ButtonStyle.danger)
@@ -227,7 +224,6 @@ class LeaveButton(discord.ui.Button):
 
         await interaction.response.defer()
         await board._refresh_embed()
-
 
 class TeamBoard(discord.ui.View):
     def __init__(self, creator_id: int, mode: str, region: str, username: str, ps_link: str, stake_m: int):
@@ -332,7 +328,6 @@ class TeamBoard(discord.ui.View):
             return
         await interaction.response.send_modal(ResultModal(self))
 
-
 class ResultModal(discord.ui.Modal, title="Match Result"):
     def __init__(self, board: TeamBoard):
         super().__init__()
@@ -362,7 +357,6 @@ class ResultModal(discord.ui.Modal, title="Match Result"):
         emb.set_footer(text="Approve = move values. Decline = no change.")
         await ch.send(embed=emb, view=ModApproveView(self.board, winner))
         await interaction.response.send_message("Proof sent to mods for review. 💖", ephemeral=True)
-
 
 class ModApproveView(discord.ui.View):
     def __init__(self, board: TeamBoard, winner: str):
@@ -400,7 +394,6 @@ class ModApproveView(discord.ui.View):
         except Exception as e:
             await inter.response.send_message(f"Error updating values: {e}", ephemeral=True)
 
-
 # ------------- cog -------------
 class AnteUp(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -417,4 +410,27 @@ class AnteUp(commands.Cog):
             params = await setup.run()
             if not params:
                 return await ctx.send("DM setup cancelled, sweetie~ 💕")
-            region, mode, username, ps_link, position, stake =_
+            region, mode, username, ps_link, position, stake = params
+
+            ch = mode_channel_map(self.bot, mode)
+            if not ch:
+                return await ctx.send("I couldn’t find the channel for that mode.", mention_author=False)
+
+            board = TeamBoard(creator_id=user.id, mode=mode, region=region,
+                              username=username, ps_link=ps_link, stake_m=stake)
+            board.teamA.append((user.id, position))
+
+            embed = board._build_embed()
+            msg = await ch.send(content=f"<@&{PING_ROLE_ID}>", embed=embed, view=board)
+            board.message = msg
+
+        except asyncio.TimeoutError:
+            await user.send("⏰ Timeout – start again with `!anteup`.")
+        except discord.Forbidden:
+            await ctx.reply("Enable DMs so Mommy can whisper to you~", mention_author=False)
+        except Exception as e:
+            log.exception("anteup error")
+            await ctx.reply("Something went wrong – try again.", mention_author=False)
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(AnteUp(bot))
