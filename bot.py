@@ -1197,48 +1197,63 @@ async def on_ready():
                 logging.error(f"Error registering persistent WagerMatchView for {match_type}: {e}")
         
        # ------------------------------------------------------------
-#  1200-1529  –  STRIP OUT THE DUPLICATE setvalue COMMAND
-# ------------------------------------------------------------
-#  NOTHING between here and checkvalue_command should stay
-# ------------------------------------------------------------
+        logging.info("ServerGuideView is registered per-user via welcome messages")
+        
+        # Look for existing team tickets message
+        try:
+            ticket_channel = bot.get_channel(1350177702778245172)
+            if ticket_channel:
+                async for message in ticket_channel.history(limit=50):
+                    if message.author == bot.user and "Team Creation Requests" in message.content:
+                        logging.info(f"Found existing ticket message with ID {message.id}")
+                        break
+        except Exception as e:
+            logging.error(f"Error finding ticket message: {e}")
+            
+    except Exception as view_error:
+        logging.error(f"Error registering persistent views: {view_error}")
+    
+    if not update_heartbeat.is_running():
+        update_heartbeat.start()
+
+# ---------- safe shutdown (top-level) ----------
+try:
+    _install_shutdown_handler(bot.loop)
+    logging.info("Shutdown handler installed")
+except Exception as e:
+    logging.error(f"Failed to install shutdown handler: {e}")
 
 @bot.command(name="checkvalue")
 async def checkvalue_command(ctx, member: Optional[discord.Member] = None):
     """Check the user's value from the data manager"""
     logging.info(f"Processing checkvalue command for message ID {ctx.message.id}")
-
+    
     try:
         if data_manager is None:
             await ctx.send("😔 Oh no darling, Mommy can't access your value records right now! Try again later, sweetie! 💕")
             return
-
-        # If no member specified, use the message author
+            
         if not member:
             member = ctx.author
-
-        # Start loading animation
+        
         animator = loading_animations.LoadingAnimator(ctx)
         await animator.start()
-
+            
         user_id = str(member.id)
         value = data_manager.get_member_value(user_id)
-
-        # Get server-specific ranking if in a guild
+        
         server_id = None
         if ctx.guild:
             server_id = str(ctx.guild.id)
-
-        # Get ranking info if available
+            
         try:
             rank, total, member_value = data_manager.get_member_ranking(user_id)
             ranking_text = format_ranking_message(rank, total, value, True)
         except Exception as e:
             logging.error(f"Error getting ranking: {e}")
             ranking_text = "Ranking information not available right now."
-
-        # Special handling for Novera server when user has zero value
-        if value == 0 and ctx.guild and str(ctx.guild.id) == "1350165280940228629":  # Novera Team Hub
-            # Updated zero value channel ID to 1350182132043223090
+        
+        if value == 0 and ctx.guild and str(ctx.guild.id) == "1350165280940228629":
             evaluator_channel = ctx.guild.get_channel(1350182132043223090)
             if evaluator_channel:
                 message = f"Your value is **0**!\n\nOh sweetie, you don't have any value yet! Please head over to {evaluator_channel.mention} and ask one of the evaluators for tryouts~ 💕"
@@ -1249,7 +1264,219 @@ async def checkvalue_command(ctx, member: Optional[discord.Member] = None):
         elif value > 0:
             message = random.choice(MOMMY_LOW_VALUE_VARIANTS).format(value=value)
         else:
-            message = random
+            message = random.choice(MOMMY_ZERO_VALUE_VARIANTS).format(value=value)
+        
+        embed = discord.Embed(
+            title=f"✨ {member.display_name}'s Value ✨",
+            description=message,
+            color=discord.Color.purple()
+        )
+        
+        embed.add_field(name="Ranking", value=ranking_text, inline=False)
+        
+        if member.avatar:
+            embed.set_thumbnail(url=member.avatar.url)
+            
+        await animator.stop(final_embed=embed)
+        logging.info(f"Checkvalue command executed by {ctx.author} for {user_id} - value: {value}")
+        
+    except Exception as e:
+        error_msg = f"Error in checkvalue command: {e}"
+        logging.error(error_msg)
+        logging.error(traceback.format_exc())
+        try:
+            await ctx.send(f"{random.choice(MOMMY_ERROR_VARIANTS)}\n\n*Error: {str(e)}*")
+        except:
+            pass
+
+@bot.command(name="checkgold")
+async def checkgold_command(ctx, member: Optional[discord.Member] = None):
+    """Check the user's gold balance from the data manager"""
+    logging.info(f"Checkgold command received from {ctx.author.name} (ID: {ctx.author.id})")
+    
+    try:
+        if member is None:
+            member = ctx.author
+            
+        user_id = str(member.id)
+        
+        animator = loading_animations.LoadingAnimator(ctx, "💰", f"Checking gold balance for {member.display_name}...")
+        await animator.start()
+        
+        gold = data_manager.get_member_gold(user_id)
+        
+        possessive = "your" if member == ctx.author else member.display_name + "'s"
+        embed = discord.Embed(
+            title="💰 Gold Balance 💰",
+            description=f"Here's {possessive} current gold balance, darling~",
+            color=discord.Color.gold()
+        )
+        
+        embed.add_field(name="Member", value=member.mention, inline=True)
+        embed.add_field(name="Gold", value=f"{gold:,} 💰", inline=True)
+        
+        if gold > 10000:
+            embed.add_field(name="Status", value="🤑 Incredibly wealthy!", inline=False)
+        elif gold > 5000:
+            embed.add_field(name="Status", value="💎 Very rich!", inline=False)
+        elif gold > 1000:
+            embed.add_field(name="Status", value="💵 Well-off", inline=False)
+        elif gold > 500:
+            embed.add_field(name="Status", value="💰 Comfortable", inline=False)
+        elif gold > 100:
+            embed.add_field(name="Status", value="👛 Getting by", inline=False)
+        elif gold > 0:
+            embed.add_field(name="Status", value="🪙 Just starting out", inline=False)
+        else:
+            embed.add_field(name="Status", value="📉 Broke...", inline=False)
+        
+        if member.avatar:
+            embed.set_thumbnail(url=member.avatar.url)
+            
+        await animator.stop(final_embed=embed)
+        logging.info(f"Checkgold command executed by {ctx.author} for {user_id} - gold: {gold}")
+        
+    except Exception as e:
+        error_msg = f"Error in checkgold command: {e}"
+        logging.error(error_msg)
+        logging.error(traceback.format_exc())
+        try:
+            await ctx.send(f"{random.choice(MOMMY_ERROR_VARIANTS)}\n\n*Error: {str(e)}*")
+        except:
+            pass
+
+@bot.command(name="goldrush")
+async def goldrush_command(ctx):
+    """Show the top gold holders in the server for the Gold Rush Marathon"""
+    logging.info(f"Gold Rush rankings command received from {ctx.author.name} (ID: {ctx.author.id})")
+    
+    tasks = []
+    loading_msg = None
+    
+    try:
+        if not ctx.guild:
+            await ctx.send("This command can only be used in a server, sweetie~ 💖")
+            return
+        
+        try:
+            loading_msg = await ctx.send("🔄 Calculating Gold Rush leaderboard...")
+        except Exception as send_error:
+            logging.error(f"Failed to send loading message: {send_error}")
+        
+        async def fetch_gold_data():
+            return data_manager.get_all_member_gold()
+        
+        gold_task = asyncio.create_task(fetch_gold_data())
+        tasks.append(gold_task)
+        
+        member_gold = await simple_discord_fix.with_timeout(gold_task, timeout_seconds=10)
+        
+        if not member_gold:
+            msg = "No members have any gold yet, darling~ 💖\nParticipate in events to earn gold during the Gold Rush Marathon!"
+            if loading_msg:
+                await loading_msg.edit(content=msg)
+            else:
+                await ctx.send(msg)
+            return
+            
+        guild_member_gold = {}
+        for member_id, gold in member_gold.items():
+            if gold <= 0:
+                continue
+            try:
+                member = ctx.guild.get_member(int(member_id))
+                if member:
+                    guild_member_gold[member_id] = gold
+            except ValueError:
+                logging.warning(f"Invalid member ID in gold data: {member_id}")
+                continue
+            
+        if not guild_member_gold:
+            msg = "No members in this server have any gold yet, sweetie~ 💖\nParticipate in events to earn gold during the Gold Rush Marathon!"
+            if loading_msg:
+                await loading_msg.edit(content=msg)
+            else:
+                await ctx.send(msg)
+            return
+            
+        sorted_members = sorted(guild_member_gold.items(), key=lambda x: x[1], reverse=True)
+        
+        embed = discord.Embed(
+            title="🏆 Gold Rush Marathon Leaderboard 🏆",
+            description=f"The richest gold miners in **{ctx.guild.name}**:",
+            color=discord.Color.gold()
+        )
+        
+        rank_emojis = {1: "👑", 2: "💰", 3: "💎", 4: "🌟", 5: "✨",
+                       6: "💫", 7: "🏅", 8: "🪙", 9: "💵", 10: "🔮"}
+        
+        count = 0
+        for member_id, gold in sorted_members[:10]:
+            count += 1
+            try:
+                member = ctx.guild.get_member(int(member_id))
+                if member:
+                    emoji = rank_emojis.get(count, "⭐")
+                    embed.add_field(
+                        name=f"{emoji} #{count}: {member.display_name}",
+                        value=f"**{gold:,}** gold coins",
+                        inline=False
+                    )
+            except Exception as field_error:
+                logging.error(f"Error adding field for member {member_id}: {field_error}")
+                continue
+        
+        if count >= 10:
+            embed.set_footer(text="The Gold Rush is heating up! Many miners are competing for glory! • Gold Rush Marathon 2025")
+        elif count >= 5:
+            embed.set_footer(text="The Gold Rush is going strong! Will you climb the ranks? • Gold Rush Marathon 2025")
+        else:
+            embed.set_footer(text="The Gold Rush has just begun! Now's your chance to take the lead! • Gold Rush Marathon 2025")
+        
+        if ctx.guild.icon:
+            embed.set_thumbnail(url=ctx.guild.icon.url)
+            
+        async def send_embed():
+            await ctx.send(embed=embed)
+            
+        send_task = asyncio.create_task(send_embed())
+        tasks.append(send_task)
+        await simple_discord_fix.with_timeout(send_task, timeout_seconds=10)
+        
+        if loading_msg:
+            try:
+                delete_task = asyncio.create_task(loading_msg.delete())
+                tasks.append(delete_task)
+                await simple_discord_fix.with_timeout(delete_task, timeout_seconds=5)
+            except Exception as delete_error:
+                logging.warning(f"Error deleting loading message: {delete_error}")
+        
+    except asyncio.TimeoutError:
+        logging.error("Timeout in goldrush_command")
+        msg = "The Gold Rush leaderboard is taking too long to calculate. Please try again later, darling~"
+        if loading_msg:
+            await loading_msg.edit(content=msg)
+        else:
+            await ctx.send(msg)
+    except Exception as e:
+        logging.error(f"Error in goldrush_command: {e}", exc_info=True)
+        msg = "Oops! Something went wrong with the Gold Rush leaderboard. Please try again later, darling~"
+        try:
+            if loading_msg:
+                await loading_msg.edit(content=msg)
+            else:
+                await ctx.send(msg)
+        except Exception as send_error:
+            logging.error(f"Failed to send error message: {send_error}")
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except Exception as cleanup_error:
+                logging.error(f"Error during task cleanup: {cleanup_error}")
 @bot.command(name="confess")
 async def confess_command(ctx):
     """Mommy confesses what she's been up to"""
