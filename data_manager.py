@@ -7,14 +7,13 @@ logger = logging.getLogger(__name__)
 
 class DataManager:
     def __init__(self) -> None:
-        # Runtime resolution of the mount path
         mount = os.getenv("SQLITE3_RAILWAY_VOLUME_MOUNT_PATH") or os.getenv("SQLITE3.RAILWAY_VOLUME_MOUNT_PATH")
         if mount:
             os.makedirs(mount, exist_ok=True)
             db_file = os.path.join(mount, "bot.db")
             logger.info(f"Using persistent SQLite at {db_file}")
         else:
-            db_file = ":memory:"  # fallback for builds / local dev
+            db_file = ":memory:"
             logger.warning("SQLite mount path not found – using in-memory DB (data will NOT persist)")
         self.conn = sqlite3.connect(db_file, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -75,3 +74,6 @@ def get_member_ranking(uid: str) -> Tuple[int, int, int]:
 
 def get_data_filename() -> str:
     return getattr(_DM.conn, "filename", ":memory:")
+
+# ---------- drop-in replacement so bot.py does NOT need to change ----------
+data_manager = _DM  # ← bot.py can keep using data_manager.xxx()
