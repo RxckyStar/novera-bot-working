@@ -1,3 +1,28 @@
+
+
+# ---------- safe-shutdown helper (added) ----------
+async def _close_down():
+    logger.info("[shutdown] flushing data to disk…")
+    try:
+        # force write of current member_data.json
+        data_manager._save_data()
+    except Exception as e:
+        logger.exception("shutdown save failed: %s", e)
+    # give OS time to sync buffers
+    try:
+        await asyncio.sleep(0.5)
+    except Exception:
+        pass
+    logger.info("[shutdown] flush complete – safe to exit")
+
+# ---------- signal handler (added) ----------
+def _install_shutdown_handler(loop):
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(_close_down()))
+        except NotImplementedError:
+            # not available on this platform/event loop
+            pass
 #!/usr/bin/env python3
 """
 Novera Assistant Discord Bot
@@ -125,20 +150,6 @@ COMMAND_PREFIX = "!"
 
 # Create bot instance with intents
 bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
-# Allow custom help cog to override default
-try:
-    bot.remove_command("help")
-except Exception:
-    pass
-
-# --- Novera join/leave channel for simple server-wide messages ---
-WELCOME_LEAVE_CHANNEL_ID = 1350199401426980955
-LEAVE_LINES = [
-    "{name} left the pitch. We’ll keep the lights on.",
-    "{name} dipped. See you around.",
-    "{name} has left. GG and good luck."
-]
-
 
 # Enhanced token validation and import with fallback mechanism
 try:
@@ -1208,6 +1219,13 @@ async def on_ready():
         update_heartbeat.start()
 
 @bot.command(name="checkvalue")
+    # Install safe shutdown handler (flush member_data.json on SIGTERM/SIGINT)
+    try:
+        _install_shutdown_handler(bot.loop)
+        logging.info("Shutdown handler installed")
+    except Exception as e:
+        logging.error(f"Failed to install shutdown handler: {e}")
+
 async def checkvalue_command(ctx, member: Optional[discord.Member] = None):
     """Check the user's value from the data manager"""
     logging.info(f"Processing checkvalue command for message ID {ctx.message.id}")
@@ -3534,7 +3552,7 @@ class TryoutsView(discord.ui.View):
                     data_manager.set_member_value(str(self.player.id), value)
                     
                     # Notify in the channel where the command was used
-                    await self.ctx.send(f"✅ Tryout evaluation for {self.player.mention} has been completed! Their value has been set to **¥{value} million**.")
+                    await self.ctx.send(f"✅ Tryout evaluation for {self.player.mention} has been completed! Their value has been set to **{value} million**.")
                     
                 except Exception as e:
                     logging.error(f"Error updating roles: {e}")
@@ -3783,10 +3801,6 @@ async def getevaluated_command(ctx):
 
 @bot.command(name="tryoutsresults", aliases=["tryoutrsresults", "tryoutresults"])
 async def tryouts_results_command(ctx, member: Optional[discord.Member] = None, *args):
-    # Command disabled by request
-    await ctx.send("Tryout results command is currently disabled.")
-    return
-
     """Submit tryouts results for a player - Trainers role only (role ID: 1350175902738419734)"""
     # EXTENSIVE LOGGING FOR DEBUGGING
     logging.info(f"*** TRYOUTS COMMAND RECEIVED from {ctx.author.name} (ID: {ctx.author.id}) ***")
@@ -6565,7 +6579,7 @@ async def on_message(message):
                                     await player_dm.send(
                                         f"# 🎉 Your Evaluation is Complete!\n\n"
                                         f"Darling, Mommy has the results of your evaluation! 💖\n\n"
-                                        f"Your value has been set to **¥¥{value} million**!\n\n"
+                                        f"Your value has been set to **¥{value} million**!\n\n"
                                         f"Check the tryouts channel to see your full evaluation! 📋"
                                     )
                                     logging.info(f"[TRYOUTS] Sent completion DM to player {member_id}")
@@ -6817,31 +6831,26 @@ async def on_ready():
     """Called when the bot successfully connects to Discord"""
     logging.info(f"Bot is ready! Logged in as {bot.user.name} ({bot.user.id})")
     logging.info(f"Connected to {len(bot.guilds)} guilds with {sum(g.member_count for g in bot.guilds)} members")
-
+    
     # Start the heartbeat system
     heartbeat = heartbeat_manager.get_heartbeat_manager("discord_bot")
     await heartbeat.start()
-
+    
     # Start the heartbeat update task
     if not update_heartbeat.is_running():
         update_heartbeat.start()
         logging.info("Started heartbeat update task")
-
-    # Load cogs (guarded so we don't reload on reconnects)
-    async def _load(ext: str, label: str):
-        if ext not in bot.extensions:
-            try:
-                await bot.load_extension(ext)
-                logging.info(f"✅ Loaded {ext} ({label})")
-            except Exception as e:
-                logging.error(f"⚠️ Failed to load {ext}: {e}", exc_info=True)
-
-    await _load("cogs.tryouts", "Tryout flow")
-    await _load("cogs.help_public", "Public help")
-    await _load("cogs.value_admin", "Set/Adjust Value")
-    await _load("cogs.anteup", "Ante Up & Match Ads")   # ⬅️ added
-
+    
+    # ✅ Load the tryouts cog dynamically
+    try:
+        await bot.load_extension("cogs.tryouts")
+        logging.info("✅ Successfully loaded cogs.tryouts (Tryout & SetValue commands ready)")
+    except Exception as e:
+        logging.error(f"⚠️ Failed to load cogs.tryouts: {e}")
+    
+    # Print final confirmation
     print(f"🤖 Logged in as {bot.user} and all systems are running.")
+
 
 @bot.event
 async def on_disconnect():
@@ -6870,14 +6879,3 @@ if __name__ == "__main__":
         logger.critical(f"Error starting bot: {e}")
         import traceback
         logger.critical(traceback.format_exc())
-
-
-@bot.event
-async def on_member_remove(member):
-    try:
-        channel = bot.get_channel(WELCOME_LEAVE_CHANNEL_ID)
-        if channel:
-            import random
-            await channel.send(random.choice(LEAVE_LINES).format(name=member.display_name))
-    except Exception as e:
-        logging.debug(f"leave message failed: {e}")
