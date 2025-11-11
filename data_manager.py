@@ -117,8 +117,8 @@ class DataManager:
 
 # ===== Singleton + module-level helpers =====
 
-# Always point to ONE canonical file name
-_DEFAULT_FILE = os.environ.get("NOVERA_DATA_FILE", "member_data.json")
+# Railway persistent mount point – change only this line
+_DEFAULT_FILE = os.environ.get("NOVERA_DATA_FILE", "/app/member_data.json")
 _DM: DataManager = DataManager(_DEFAULT_FILE)
 
 def ensure_member(member_id: str) -> None:
