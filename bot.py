@@ -6796,7 +6796,7 @@ async def on_ready():
     # ----------------------------------------------------------------------
 
     # Load all cogs
-    cog_list = ("cogs.tryouts", "cogs.anteup", "cogs.value_admin", "cogs.help_public", "cogs.roast_clanker")
+    cog_list = ("cogs.tryouts", "cogs.anteup", "cogs.value_admin", "cogs.help_public", "cogs.roast_clanker", "cogs.janitor")
     for cog in cog_list:
         try:
             await bot.load_extension(cog)
