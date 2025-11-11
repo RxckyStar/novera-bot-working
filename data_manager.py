@@ -3,7 +3,7 @@
 - Exposes module-level functions used across the bot:
   get_member_value, set_member_value, get_member_ranking, get_all_member_values, ensure_member, etc.
 - ALWAYS writes/reads the SAME member_data.json so all commands are consistent.
-- Auto-commits to GitHub after every save so values survive Railway restarts.
+- Git-auto-push disabled – Railway container has no git; values stay in container.
 """
 
 from __future__ import annotations
@@ -11,28 +11,12 @@ import json
 import os
 import shutil
 import logging
-import subprocess
 from datetime import datetime
 from typing import Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
 
-# ---------- auto-commit helper ----------
-def _git_commit_push(filename: str) -> None:
-    """Auto-commit member_data.json to GitHub after every save."""
-    try:
-        os.system("git config user.name 'Novera-Bot'")
-        os.system("git config user.email 'bot@novera.com'")
-        subprocess.run(["git", "add", filename], check=True)
-        subprocess.run(["git", "commit", "-m", "auto-save values"], check=True)
-        subprocess.run(["git", "push"], check=True)
-        logger.info("Pushed member_data.json to GitHub")
-    except Exception as e:
-        logger.error(f"Git push failed: {e}")
-
-
-# ---------- DataManager class ----------
 class DataManager:
     def __init__(self, filename: str) -> None:
         self.filename = filename
@@ -92,7 +76,7 @@ class DataManager:
                 f.flush()
                 os.fsync(f.fileno())
             logger.info(f"Saved data file with {len(self.data['members'])} members")
-            _git_commit_push(self.filename)  # auto-push to GitHub
+            # Git-auto-push disabled – Railway has no git binary
         except Exception as e:
             logger.error(f"Error saving data: {e}")
 
