@@ -246,7 +246,7 @@ active_tryouts = {}
 tryouts.set_active_tryouts(active_tryouts)
 
 # Initialize the data manager and activity tracker
-data_manager = DataManager(DATA_FILE)
+# data_manager = DataManager(DATA_FILE)  # old ctor – removed
 activity_tracker = ActivityTracker(data_manager)
 logger.info("Initialized data manager and activity tracker")
 
