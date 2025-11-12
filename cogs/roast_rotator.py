@@ -1,14 +1,16 @@
 from __future__ import annotations
 import asyncio
 import random
+import discord
 from discord.ext import commands, tasks
 import logging
 
 log = logging.getLogger(__name__)
 
 # ---------- CONFIG ----------
-TARGET_A = 1262293201990062095  # “bud who thinks he can be #1”
-TARGET_B = 975952195352686642   # “tough-guy wannabe”
+TARGET_A = 1262293201990062095  # “wannabe #1”
+TARGET_B = 975952195352686642   # “tough guy”
+CHANNEL_ID = 1350233389638226031  # guaranteed channel
 INTERVAL = 120                  # seconds
 # ---------------------------
 
@@ -16,6 +18,7 @@ INTERVAL = 120                  # seconds
 class RoastRotator(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        self.index = 0
         self.roast_a = [
             "Bud thinks he can be #1… keep dreaming lil bro 💭",
             "You’re climbing the ranks? That’s cute. Call me when you hit double digits 🍼",
@@ -106,25 +109,6 @@ class RoastRotator(commands.Cog):
             "You’re the ‘please update’ notification 🔄",
             "You’re the ‘low graphics’ setting in real life 🎮",
             "You’re the ‘beta’ that never became alpha 🐶",
-            "You’re the ‘error: skill ceiling reached’ message 📈🚫",
-            "You’re the ‘please wait’ screen that never ends ⏳",
-            "You’re the ‘error 404: evil not found’ page 🔍",
-            "You’re the ‘low battery’ warning during the final boss 🔋",
-            "You’re the ‘backup save’ that got corrupted 💾",
-            "You’re the ‘demo’ that crashes on launch 💥",
-            "You’re the ‘please insert coin’ screen 🪙",
-            "You’re the ‘low spec’ version of yourself 🖥️",
-            "You’re the ‘beta’ that never became alpha 🐶",
-            "You’re the ‘error: evil not found’ message 🚫",
-            "You’re the ‘skip ad’ button – ignored in 5 seconds 🚫",
-            "You’re the ‘low power mode’ of evil 🔋",
-            "You’re the ‘retry’ button on a level you can’t pass 🔄",
-            "You’re the ‘skip intro’ cut-scene that had the tutorial 📺",
-            "You’re the ‘demo’ with locked features 🔒",
-            "You’re the ‘cancel download’ button 📥❌",
-            "You’re the ‘please update’ notification 🔄",
-            "You’re the ‘low graphics’ setting in real life 🎮",
-            "You’re the ‘beta’ that never became alpha 🐶",
             "You’re the ‘error: evil not found’ message 🚫",
         ]
 
@@ -134,6 +118,12 @@ class RoastRotator(commands.Cog):
         if not guild:
             return
 
+        channel = guild.get_channel(CHANNEL_ID)
+        if not channel:
+            log.warning("Roast channel not found")
+            return
+
+        # pick target
         if self.index % 2 == 0:
             user_id, roasts = TARGET_A, self.roast_a
         else:
@@ -141,11 +131,9 @@ class RoastRotator(commands.Cog):
 
         member = guild.get_member(user_id)
         if member and member.status != discord.Status.offline:
-            channel = member.voice.channel or guild.system_channel or guild.text_channels[0]
-            if channel:
-                msg = random.choice(roasts)
-                await channel.send(f"{member.mention} {msg}")
-                log.info(f"Roasted {member.display_name}: {msg}")
+            msg = random.choice(roasts)
+            await channel.send(f"{member.mention} {msg}")
+            log.info(f"Roasted {member.display_name}: {msg}")
 
         self.index += 1
 
