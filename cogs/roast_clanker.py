@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 from typing import Dict, List
 
-ENABLED = false # safety switch
+ENABLED = true # safety switch
 
 # ---------- scripts ----------
 ROAST_SCRIPTS = [  # your 60 full scripts here
