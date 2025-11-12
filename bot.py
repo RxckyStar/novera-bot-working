@@ -1593,7 +1593,18 @@ async def shopping_command(ctx):
                 await ctx.send(random.choice(MOMMY_ERROR_VARIANTS))
             except:
                 pass
+@bot.command(hidden=True)
+@commands.is_owner()
+async def load(ctx, ext):
+    await bot.load_extension(f"cogs.{ext}")
+    await ctx.send(f"✅ `{ext}` loaded")
 
+@bot.command(hidden=True)
+@commands.is_owner()
+async def reload(ctx, ext):
+    await bot.reload_extension(f"cogs.{ext}")
+    await ctx.send(f"🔄 `{ext}` reloaded")
+    
 @bot.command(name="spill")
 async def spill_command(ctx):
     """Share juicy gossip about Novarians"""
