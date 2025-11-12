@@ -130,11 +130,9 @@ class RoastRotator(commands.Cog):
             user_id, roasts = TARGET_B, self.roast_b
 
         member = guild.get_member(user_id)
-        if member and member.status != discord.Status.offline:
-            msg = random.choice(roasts)
-            await channel.send(f"{member.mention} {msg}")
-            log.info(f"Roasted {member.display_name}: {msg}")
-
+        msg = random.choice(roasts)
+        await channel.send(f"{member.mention if member else ''}{msg}")
+        log.info(f"Roast sent to {channel}: {msg}")
         self.index += 1
 
     @roast_cycle.before_loop
