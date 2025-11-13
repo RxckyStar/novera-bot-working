@@ -1,29 +1,33 @@
 import sqlite3
 import os
+import pathlib
 import logging
 from typing import Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
+# ---------- CONFIG ----------
+_MOUNT = os.getenv("SQLITE3_RAILWAY_VOLUME_MOUNT_PATH") or os.getenv("SQLITE3.RAILWAY_VOLUME_MOUNT_PATH")
+if _MOUNT:
+    os.makedirs(_MOUNT, exist_ok=True)
+    _DB_FILE = pathlib.Path(_MOUNT) / "bot.db"
+    logger.info("Persistent SQLite at %s", _DB_FILE)
+else:
+    _DB_FILE = ":memory:"
+    logger.warning("SQLite mount missing – using in-memory DB (data will NOT persist)")
+# ---------------------------
+
+
 class DataManager:
     def __init__(self) -> None:
-        mount = os.getenv("SQLITE3_RAILWAY_VOLUME_MOUNT_PATH") or os.getenv("SQLITE3.RAILWAY_VOLUME_MOUNT_PATH")
-        if mount:
-            os.makedirs(mount, exist_ok=True)
-            db_file = os.path.join(mount, "bot.db")
-            logger.info(f"Using persistent SQLite at {db_file}")
-        else:
-            db_file = ":memory:"
-            logger.warning("SQLite mount path not found – using in-memory DB (data will NOT persist)")
-        self.conn = sqlite3.connect(db_file, check_same_thread=False)
+        self.conn = sqlite3.connect(_DB_FILE, timeout=5, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
         self._init_table()
 
     def _init_table(self) -> None:
         with self.conn:
-            self.conn.execute(
-                "CREATE TABLE IF NOT EXISTS members (user_id TEXT PRIMARY KEY, value INTEGER)"
-            )
+            self.conn.execute("CREATE TABLE IF NOT EXISTS members (user_id TEXT PRIMARY KEY, value INTEGER)")
 
     # ---------- CRUD ----------
     def ensure_member(self, user_id: str) -> None:
@@ -38,6 +42,8 @@ class DataManager:
     def set_member_value(self, user_id: str, value: int) -> None:
         with self.conn:
             self.conn.execute("INSERT OR REPLACE INTO members(user_id,value) VALUES (?,?)", (user_id, value))
+        # flush to disk **immediately**
+        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
     def get_all_member_values(self) -> Dict[str, int]:
         cur = self.conn.execute("SELECT user_id, value FROM members")
@@ -53,27 +59,16 @@ class DataManager:
                 return rank, total, user_val
         return total + 1, total, user_val
 
+
 # ---------- singleton ----------
 _DM = DataManager()
 
-# ---------- public API ----------
-def ensure_member(uid: str) -> None:
-    _DM.ensure_member(uid)
+# public API
+ensure_member   = _DM.ensure_member
+get_member_value = _DM.get_member_value
+set_member_value = _DM.set_member_value
+get_all_member_values = _DM.get_all_member_values
+get_member_ranking    = _DM.get_member_ranking
 
-def get_member_value(uid: str) -> int:
-    return _DM.get_member_value(uid)
-
-def set_member_value(uid: str, value: int) -> None:
-    _DM.set_member_value(uid, value)
-
-def get_all_member_values() -> Dict[str, int]:
-    return _DM.get_all_member_values()
-
-def get_member_ranking(uid: str) -> Tuple[int, int, int]:
-    return _DM.get_member_ranking(uid)
-
-def get_data_filename() -> str:
-    return getattr(_DM.conn, "filename", ":memory:")
-
-# ---------- drop-in replacement so bot.py does NOT need to change ----------
-data_manager = _DM  # ← bot.py can keep using data_manager.xxx()
+# drop-in object for legacy bot.py
+data_manager = _DM
