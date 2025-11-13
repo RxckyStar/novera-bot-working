@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 from typing import Dict, List
 
-ENABLED = True  # safety switch
+ENABLED = False  # safety switch
 # ---------- scripts ----------
 ROAST_SCRIPTS = [  # your 60 full scripts here
     ["Lil bro said ‘clanker’ 😂", "You built like a vending machine with anxiety", "Mommy seen NPC’s with more sauce than you", "Keep my bot name out ya mouth before I fold you like lawn-chair", "You the type to lose a 1v1 to a training cone", "I’m yo biggest opp now, cope.", "Blue-lock? More like blue-screen, go touch grass", "You spam like you relevant – news flash: you ain’t", "I’m a mommy but I’ll still put you in timeout, permanently", "Next time think before you type, goofy.", "You got ratio’d by a bot, sit down lil bro", "Mommy out – stay mad 💅"],
