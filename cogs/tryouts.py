@@ -86,7 +86,7 @@ class PositionSelect(discord.ui.Select):
 class RatingSelect(discord.ui.Select):
     def __init__(self, label: str, row: int = 0):
         options = [discord.SelectOption(label=str(i), value=str(i)) for i in range(1, 11)]
-        super().__init__(placeholder=f"{label} (1–10)", min_values=1, max_values=1, options=options, row=row)
+        super().__init__(placeholder=f"{label} (1–10)", min_values=1, max_values=1, options=opts, row=row)
         self.metric = label.lower()
         self.score: Optional[int] = None
 
@@ -99,16 +99,15 @@ class EvaluatorView(discord.ui.View):
     def __init__(self, position: str, on_submit):
         super().__init__(timeout=600)
 
-        # row 0
+        # ONE select per row → width = 5, always fits
         self.sel_shoot = RatingSelect("Shooting", row=0)
-        self.sel_pass = RatingSelect("Passing", row=0)
-        # row 1
-        self.sel_def = RatingSelect("Defending", row=1)
-        self.sel_drib = RatingSelect("Dribbling", row=1)
-        # row 2 (GK only)
+        self.sel_pass  = RatingSelect("Passing",  row=1)
+        self.sel_def   = RatingSelect("Defending",row=2)
+        self.sel_drib  = RatingSelect("Dribbling",row=3)
+
         self.sel_gk: Optional[RatingSelect] = None
         if position == "GK":
-            self.sel_gk = RatingSelect("Goalkeeping", row=2)
+            self.sel_gk = RatingSelect("Goalkeeping", row=4)
 
         self.on_submit = on_submit
 
@@ -118,7 +117,7 @@ class EvaluatorView(discord.ui.View):
         if self.sel_gk:
             self.add_item(self.sel_gk)
 
-    @discord.ui.button(label="Submit Ratings", style=discord.ButtonStyle.success, row=3)
+    @discord.ui.button(label="Submit Ratings", style=discord.ButtonStyle.success, row=4 if self.sel_gk else 4)
     async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
         need = [self.sel_shoot, self.sel_pass, self.sel_def, self.sel_drib]
         if self.sel_gk:
