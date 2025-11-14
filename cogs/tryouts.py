@@ -84,9 +84,9 @@ class PositionSelect(discord.ui.Select):
 
 
 class RatingSelect(discord.ui.Select):
-    def __init__(self, label: str):
+    def __init__(self, label: str, row: int = 0):
         options = [discord.SelectOption(label=str(i), value=str(i)) for i in range(1, 11)]
-        super().__init__(placeholder=f"{label} (1–10)", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder=f"{label} (1–10)", min_values=1, max_values=1, options=options, row=row)
         self.metric = label.lower()
         self.score: Optional[int] = None
 
@@ -98,21 +98,27 @@ class RatingSelect(discord.ui.Select):
 class EvaluatorView(discord.ui.View):
     def __init__(self, position: str, on_submit):
         super().__init__(timeout=600)
-        self.sel_shoot = RatingSelect("Shooting")
-        self.sel_pass  = RatingSelect("Passing")
-        self.sel_def   = RatingSelect("Defending")
-        self.sel_drib  = RatingSelect("Dribbling")
-        self.add_item(self.sel_shoot)
-        self.add_item(self.sel_pass)
-        self.add_item(self.sel_def)
-        self.add_item(self.sel_drib)
+
+        # row 0
+        self.sel_shoot = RatingSelect("Shooting", row=0)
+        self.sel_pass = RatingSelect("Passing", row=0)
+        # row 1
+        self.sel_def = RatingSelect("Defending", row=1)
+        self.sel_drib = RatingSelect("Dribbling", row=1)
+        # row 2 (GK only)
         self.sel_gk: Optional[RatingSelect] = None
         if position == "GK":
-            self.sel_gk = RatingSelect("Goalkeeping")
-            self.add_item(self.sel_gk)
+            self.sel_gk = RatingSelect("Goalkeeping", row=2)
+
         self.on_submit = on_submit
 
-    @discord.ui.button(label="Submit Ratings", style=discord.ButtonStyle.success)
+        # add items
+        for item in (self.sel_shoot, self.sel_pass, self.sel_def, self.sel_drib):
+            self.add_item(item)
+        if self.sel_gk:
+            self.add_item(self.sel_gk)
+
+    @discord.ui.button(label="Submit Ratings", style=discord.ButtonStyle.success, row=3)
     async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
         need = [self.sel_shoot, self.sel_pass, self.sel_def, self.sel_drib]
         if self.sel_gk:
