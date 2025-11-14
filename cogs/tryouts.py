@@ -98,43 +98,54 @@ class RatingSelect(discord.ui.Select):
 class EvaluatorView(discord.ui.View):
     def __init__(self, position: str, on_submit):
         super().__init__(timeout=600)
-
-        # one select per row → width = 5, always fits
-        self.sel_shoot = RatingSelect("Shooting", row=0)
-        self.sel_pass  = RatingSelect("Passing",  row=1)
-        self.sel_def   = RatingSelect("Defending",row=2)
-        self.sel_drib  = RatingSelect("Dribbling",row=3)
-
-        self.sel_gk: Optional[RatingSelect] = None
-        if position == "GK":
-            self.sel_gk = RatingSelect("Goalkeeping", row=4)
-
         self.on_submit = on_submit
+        
+        # Initialize all selects as None
+        self.sel_shoot: Optional[RatingSelect] = None
+        self.sel_pass: Optional[RatingSelect] = None
+        self.sel_def: Optional[RatingSelect] = None
+        self.sel_drib: Optional[RatingSelect] = None
+        self.sel_gk: Optional[RatingSelect] = None
 
-        # add selects
-        for item in (self.sel_shoot, self.sel_pass, self.sel_def, self.sel_drib):
-            self.add_item(item)
-        if self.sel_gk:
+        # Common metrics (all positions)
+        self.sel_def = RatingSelect("Defending", row=0)
+        self.sel_pass = RatingSelect("Passing", row=1)
+        self.add_item(self.sel_def)
+        self.add_item(self.sel_pass)
+
+        # Position-specific metrics
+        if position == "GK":
+            self.sel_gk = RatingSelect("Goalkeeping", row=2)
             self.add_item(self.sel_gk)
+            button_row = 3  # GK uses only 3 rows of selects
+        else:
+            self.sel_shoot = RatingSelect("Shooting", row=2)
+            self.sel_drib = RatingSelect("Dribbling", row=3)
+            self.add_item(self.sel_shoot)
+            self.add_item(self.sel_drib)
+            button_row = 4  # Outfield uses 4 rows of selects
 
-        # submit button – always last row
-        submit_row = 5 if position == "GK" else 4
+        # Submit button – always last row (3 for GK, 4 for outfield)
         button = discord.ui.Button(
             label="Submit Ratings",
             style=discord.ButtonStyle.success,
-            row=submit_row
+            row=button_row
         )
         button.callback = self._submit
         self.add_item(button)
 
     async def _submit(self, interaction: discord.Interaction):
-        need = [self.sel_shoot, self.sel_pass, self.sel_def, self.sel_drib]
-        if self.sel_gk:
-            need.append(self.sel_gk)
+        # Collect all non-None selects
+        need = []
+        for sel in (self.sel_shoot, self.sel_pass, self.sel_def, self.sel_drib, self.sel_gk):
+            if sel is not None:
+                need.append(sel)
+        
         missing = [s.metric for s in need if s.score is None]
         if missing:
             await interaction.response.send_message(f"Missing: {', '.join(missing)}", ephemeral=True)
             return
+        
         payload = {s.metric: s.score for s in need}
         await interaction.response.send_message("Submitted. ✅", ephemeral=True)
         await self.on_submit(payload)
