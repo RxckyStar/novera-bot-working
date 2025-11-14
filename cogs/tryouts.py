@@ -13,7 +13,7 @@ import data_manager
 
 log = logging.getLogger(__name__)
 
-# Channels / roles
+# -------------------- CONFIG --------------------
 TRYOUT_ROLE_ID       = 1350499731612110929
 ANNOUNCE_CHANNEL_ID  = 1350172182038446184
 RESULTS_CHANNEL_ID   = 1350182176007917739
@@ -21,7 +21,7 @@ EVALUATED_ROLE_ID    = 1350863646187716640
 REMOVE_THIS_ROLE_ID  = 1350864967674630144
 
 POSITIONS = ["CF", "LW", "RW", "CM", "GK"]
-OUTFIELD = ["CF", "LW", "RW", "CM"]
+OUTFIELD  = ["CF", "LW", "RW", "CM"]
 
 WEIGHTS = {
     "CF": {"shooting": 0.45, "dribbling": 0.30, "passing": 0.15, "defending": 0.10},
@@ -50,6 +50,7 @@ THANKS_VARIANTS = [
     "Got it. Your answers are locked. 📘",
     "Thanks! The evaluator will score you shortly. 📝"
 ]
+# -----------------------------------------------
 
 
 def has_role(member: discord.Member, role_id: int) -> bool:
@@ -70,7 +71,9 @@ class PositionSelect(discord.ui.Select):
     def __init__(self):
         opts = [discord.SelectOption(label=p, value=p) for p in POSITIONS]
         super().__init__(
-            placeholder=random.choice(["Choose your **position**:", "Select the role you’ll represent:", "Pick your position:"]),
+            placeholder=random.choice(
+                ["Choose your **position**:", "Select the role you’ll represent:", "Pick your position:"]
+            ),
             min_values=1, max_values=1, options=opts
         )
         self.choice: Optional[str] = None
@@ -96,9 +99,9 @@ class EvaluatorView(discord.ui.View):
     def __init__(self, position: str, on_submit):
         super().__init__(timeout=600)
         self.sel_shoot = RatingSelect("Shooting")
-        self.sel_pass = RatingSelect("Passing")
-        self.sel_def = RatingSelect("Defending")
-        self.sel_drib = RatingSelect("Dribbling")
+        self.sel_pass  = RatingSelect("Passing")
+        self.sel_def   = RatingSelect("Defending")
+        self.sel_drib  = RatingSelect("Dribbling")
         self.add_item(self.sel_shoot)
         self.add_item(self.sel_pass)
         self.add_item(self.sel_def)
@@ -112,7 +115,8 @@ class EvaluatorView(discord.ui.View):
     @discord.ui.button(label="Submit Ratings", style=discord.ButtonStyle.success)
     async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
         need = [self.sel_shoot, self.sel_pass, self.sel_def, self.sel_drib]
-        if self.sel_gk: need.append(self.sel_gk)
+        if self.sel_gk:
+            need.append(self.sel_gk)
         missing = [s.metric for s in need if s.score is None]
         if missing:
             await interaction.response.send_message(f"Missing: {', '.join(missing)}", ephemeral=True)
@@ -124,7 +128,8 @@ class EvaluatorView(discord.ui.View):
 
 def mommy_embed(title: str, description: str, user: discord.Member) -> discord.Embed:
     emb = discord.Embed(title=title, description=description, color=discord.Color.purple())
-    if user and user.avatar: emb.set_thumbnail(url=user.avatar.url)
+    if user and user.avatar:
+        emb.set_thumbnail(url=user.avatar.url)
     emb.set_footer(text="Novera • Mommy is watching ✨")
     return emb
 
@@ -137,6 +142,7 @@ class Tryouts(commands.Cog):
     def _key(self, gid: int, uid: int) -> str:
         return f"{gid}-{uid}"
 
+    # -------------------- COMMAND --------------------
     @commands.guild_only()
     @commands.cooldown(1, 10, commands.BucketType.user)
     @commands.command(name="tryout")
@@ -148,6 +154,7 @@ class Tryouts(commands.Cog):
             await ctx.reply("Usage: `!tryout @user` (cannot try out bots).", mention_author=False)
             return
 
+        # Clean-up role
         try:
             role_rm = ctx.guild.get_role(REMOVE_THIS_ROLE_ID)
             if role_rm and role_rm in member.roles:
@@ -158,7 +165,7 @@ class Tryouts(commands.Cog):
         sess = TryoutInterview(ctx.guild.id, member.id, ctx.author.id)
         self.sessions[self._key(ctx.guild.id, member.id)] = sess
 
-        # Candidate DM
+        # ---------------- CANDIDATE DM -----------------
         try:
             dm = await member.create_dm()
             await dm.send(random.choice(WELCOME_VARIANTS).format(mention=member.mention))
@@ -166,7 +173,7 @@ class Tryouts(commands.Cog):
             sel = PositionSelect()
             v.add_item(sel)
             pos_msg = await dm.send("—", view=v)
-            for _ in range(600):
+            for _ in range(600):          # 5 min timeout
                 await asyncio.sleep(0.5)
                 if sel.choice:
                     sess.position = sel.choice
@@ -184,8 +191,10 @@ class Tryouts(commands.Cog):
             await dm.send("Answer these quick questions (reply as messages):")
             for idx, q in enumerate(INTERVIEW_QS, start=1):
                 await dm.send(f"**Q{idx}.** {q}")
+
                 def check(m: discord.Message):
                     return m.author.id == member.id and m.channel.id == dm.id
+
                 try:
                     msg = await self.bot.wait_for("message", timeout=240, check=check)
                     sess.answers.append(msg.content.strip())
@@ -205,9 +214,19 @@ class Tryouts(commands.Cog):
             self.sessions.pop(self._key(ctx.guild.id, member.id), None)
             return
 
-        # Evaluator panel
+        # ---------------- EVALUATOR DM -----------------
         try:
             eval_dm = await ctx.author.create_dm()
+        except discord.Forbidden:
+            await ctx.reply(
+                f"{ctx.author.mention} I couldn’t send you the evaluator panel because you have "
+                "**DMs from server members disabled**. Enable them and run the command again.",
+                mention_author=False
+            )
+            self.sessions.pop(self._key(ctx.guild.id, member.id), None)
+            return
+
+        try:
             emb = discord.Embed(
                 title="🧪 Novera Tryout Evaluator Panel",
                 description=f"Candidate: **{member}** ({member.mention})\nPosition: **{sess.position}**",
@@ -223,7 +242,7 @@ class Tryouts(commands.Cog):
                 value_m = self._compute_value(sess.position, scores)
                 uid = str(member.id)
                 await data_manager.ensure_member(uid)
-                await data_manager.set_member_value(uid, value_m)   # ← await added
+                await data_manager.set_member_value(uid, value_m)
 
                 # add evaluated role
                 try:
@@ -235,8 +254,8 @@ class Tryouts(commands.Cog):
                 except Exception:
                     log.exception("add role failed after tryout")
 
-                # pretty results embed → 1350182176007917739
-                results_ch = self.bot.get_channel(1350182176007917739)
+                # results embed
+                results_ch = self.bot.get_channel(RESULTS_CHANNEL_ID)
                 if results_ch:
                     bar = lambda v: "🟨"*v + "⬜"*(10-v)
                     emb_results = discord.Embed(
@@ -251,8 +270,8 @@ class Tryouts(commands.Cog):
                         emb_results.set_thumbnail(url=member.avatar.url)
                     await results_ch.send(embed=emb_results)
 
-                # mommy congrats → 1350172182038446184
-                announce_ch = self.bot.get_channel(1350172182038446184)
+                # announcement
+                announce_ch = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
                 if announce_ch:
                     cute = [
                         f"💕 Mommy’s proud~ {member.mention} is now worth **¥{value_m:,}M**!",
@@ -262,7 +281,7 @@ class Tryouts(commands.Cog):
                     ]
                     await announce_ch.send(random.choice(cute), allowed_mentions=discord.AllowedMentions.none())
 
-                # DM candidate
+                # candidate value DM
                 try:
                     cdm = await member.create_dm()
                     await cdm.send(f"🏅 Your Novera value has been set to **¥{value_m:,}M**. Congratulations!")
@@ -280,6 +299,7 @@ class Tryouts(commands.Cog):
 
         await ctx.reply(f"Tryout started for {member.mention}. Check your DMs for the evaluator panel.", mention_author=False)
 
+    # ---------------- VALUE CALC ------------------
     def _compute_value(self, pos: str, s: Dict[str, int]) -> int:
         def g(k): return max(1, min(10, int(s.get(k, 5))))
         w = WEIGHTS.get(pos, WEIGHTS["CF"])
