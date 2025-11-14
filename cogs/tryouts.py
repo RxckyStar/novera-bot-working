@@ -86,7 +86,7 @@ class PositionSelect(discord.ui.Select):
 class RatingSelect(discord.ui.Select):
     def __init__(self, label: str, row: int = 0):
         options = [discord.SelectOption(label=str(i), value=str(i)) for i in range(1, 11)]
-        super().__init__(placeholder=f"{label} (1–10)", min_values=1, max_values=1, options=opts, row=row)
+        super().__init__(placeholder=f"{label} (1–10)", min_values=1, max_values=1, options=options, row=row)
         self.metric = label.lower()
         self.score: Optional[int] = None
 
@@ -99,7 +99,7 @@ class EvaluatorView(discord.ui.View):
     def __init__(self, position: str, on_submit):
         super().__init__(timeout=600)
 
-        # ONE select per row → width = 5, always fits
+        # one select per row → width = 5, always fits
         self.sel_shoot = RatingSelect("Shooting", row=0)
         self.sel_pass  = RatingSelect("Passing",  row=1)
         self.sel_def   = RatingSelect("Defending",row=2)
@@ -111,14 +111,23 @@ class EvaluatorView(discord.ui.View):
 
         self.on_submit = on_submit
 
-        # add items
+        # add selects
         for item in (self.sel_shoot, self.sel_pass, self.sel_def, self.sel_drib):
             self.add_item(item)
         if self.sel_gk:
             self.add_item(self.sel_gk)
 
-    @discord.ui.button(label="Submit Ratings", style=discord.ButtonStyle.success, row=4 if self.sel_gk else 4)
-    async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # submit button – always last row
+        submit_row = 5 if position == "GK" else 4
+        button = discord.ui.Button(
+            label="Submit Ratings",
+            style=discord.ButtonStyle.success,
+            row=submit_row
+        )
+        button.callback = self._submit
+        self.add_item(button)
+
+    async def _submit(self, interaction: discord.Interaction):
         need = [self.sel_shoot, self.sel_pass, self.sel_def, self.sel_drib]
         if self.sel_gk:
             need.append(self.sel_gk)
