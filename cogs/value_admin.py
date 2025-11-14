@@ -1,5 +1,7 @@
 from __future__ import annotations
-import discord, logging, random
+import discord
+import logging
+import random
 from discord.ext import commands
 import data_manager
 
@@ -20,8 +22,10 @@ MOMMY_ADD_VARIANTS = [
     "💴 Value boosted, sweetie. {user}: **¥{old}M** → **¥{new}M** (**+{delta}M**)"
 ]
 
+
 def has_role(member: discord.Member, role_id: int) -> bool:
     return any(r.id == role_id for r in member.roles)
+
 
 def mommy_embed(title: str, description: str, user: discord.Member) -> discord.Embed:
     emb = discord.Embed(title=title, description=description, color=discord.Color.purple())
@@ -29,6 +33,7 @@ def mommy_embed(title: str, description: str, user: discord.Member) -> discord.E
     if user.avatar:
         emb.set_thumbnail(url=user.avatar.url)
     return emb
+
 
 class ValueAdmin(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -43,19 +48,19 @@ class ValueAdmin(commands.Cog):
             uid = str(member.id)
             old = data_manager.get_member_value(uid)
             new = max(0, old + int(delta))
-            data_manager.set_member_value(uid, new)
+            await data_manager.set_member_value(uid, new)   # ← await added
 
             desc = random.choice(MOMMY_ADD_VARIANTS).format(user=member.mention, old=old, new=new, delta=(new-old))
             emb = mommy_embed("✨ Value Adjusted", desc, member)
 
             emb.add_field(name="Previous", value=f"¥{old}M", inline=True)
             emb.add_field(name="New", value=f"¥{new}M", inline=True)
-            emb.add_field(name="Change", value=f"+{new-old}M" if new>=old else f"-{old-new}M", inline=True)
+            emb.add_field(name="Change", value=f"+{new-old}M" if new >= old else f"-{old-new}M", inline=True)
 
             await ctx.send(embed=emb)
 
             ch = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
-            if ch: 
+            if ch:
                 await ch.send(embed=emb)
 
         except Exception as e:
@@ -73,7 +78,7 @@ class ValueAdmin(commands.Cog):
             uid = str(member.id)
             old = data_manager.get_member_value(uid)
             new = max(0, int(new_value))
-            data_manager.set_member_value(uid, new)   # <-- ONLY LINE ADDED
+            await data_manager.set_member_value(uid, new)   # ← await added
 
             desc = random.choice(MOMMY_SET_VARIANTS).format(user=member.mention, new=new)
             emb = mommy_embed("💜 Value Set", desc, member)
@@ -86,12 +91,13 @@ class ValueAdmin(commands.Cog):
             await ctx.send(embed=emb)
 
             ch = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
-            if ch: 
+            if ch:
                 await ch.send(embed=emb)
 
         except Exception as e:
             log.exception("setvalue failed")
             await ctx.send("❌ Mommy couldn't set that right now, darling.")
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ValueAdmin(bot))
