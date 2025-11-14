@@ -1,74 +1,116 @@
-import sqlite3
-import os
-import pathlib
-import logging
+from __future__ import annotations
+import asyncio
+import re
+import discord
+from discord.ext import commands
 from typing import Dict, Tuple
+import logging
 
 logger = logging.getLogger(__name__)
 
 # ---------- CONFIG ----------
-_MOUNT = os.getenv("SQLITE3_RAILWAY_VOLUME_MOUNT_PATH") or os.getenv("SQLITE3.RAILWAY_VOLUME_MOUNT_PATH")
-if _MOUNT:
-    os.makedirs(_MOUNT, exist_ok=True)
-    _DB_FILE = pathlib.Path(_MOUNT) / "bot.db"
-    logger.info("Persistent SQLite at %s", _DB_FILE)
-else:
-    _DB_FILE = ":memory:"
-    logger.warning("SQLite mount missing – using in-memory DB (data will NOT persist)")
-# ---------------------------
+LEDGER_CH_ID = 1350172182038446184   # your private log channel
+LEDGER_REGEX = re.compile(r"^(\d+)\s+(-?\d+)$")
+# ----------------------------
 
 
 class DataManager:
-    def __init__(self) -> None:
-        self.conn = sqlite3.connect(_DB_FILE, timeout=5, check_same_thread=False)
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
-        self._init_table()
+    def __init__(self, bot: commands.Bot) -> None:
+        self.bot = bot
+        self._cache: dict[str, int] = {}  # in-memory only
+        bot.loop.create_task(self._replay_ledger())
 
-    def _init_table(self) -> None:
-        with self.conn:
-            self.conn.execute("CREATE TABLE IF NOT EXISTS members (user_id TEXT PRIMARY KEY, value INTEGER)")
+    # ---------- startup replay ----------
+    async def _replay_ledger(self) -> None:
+        await self.bot.wait_until_ready()
+        ch = self.bot.get_channel(LEDGER_CH_ID)
+        if not ch:
+            logger.warning("Ledger channel not found – starting with empty cache")
+            return
 
-    # ---------- CRUD ----------
+        # replay **entire** channel (newest → oldest)
+        async for msg in ch.history(limit=None, oldest_first=False):
+            if m := LEDGER_REGEX.match(msg.content):
+                uid, val = m.groups()
+                self._cache[uid] = int(val)
+
+        logger.info("Ledger replayed: %d members cached", len(self._cache))
+
+    # ---------- internal helpers ----------
+    async def _log(self, user_id: str, value: int) -> None:
+        ch = self.bot.get_channel(LEDGER_CH_ID)
+        if ch:
+            await ch.send(f"{user_id} {value}")
+
+    # ---------- CRUD (same names as before) ----------
     def ensure_member(self, user_id: str) -> None:
-        with self.conn:
-            self.conn.execute("INSERT OR IGNORE INTO members(user_id,value) VALUES (?,0)", (user_id,))
+        self._cache.setdefault(user_id, 0)
 
     def get_member_value(self, user_id: str) -> int:
-        cur = self.conn.execute("SELECT value FROM members WHERE user_id=?", (user_id,))
-        row = cur.fetchone()
-        return row[0] if row else 0
+        return self._cache.get(user_id, 0)
 
-    def set_member_value(self, user_id: str, value: int) -> None:
-        with self.conn:
-            self.conn.execute("INSERT OR REPLACE INTO members(user_id,value) VALUES (?,?)", (user_id, value))
-        # flush to disk **immediately**
-        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    async def set_member_value(self, user_id: str, value: int) -> None:
+        self._cache[user_id] = max(0, int(value))
+        await self._log(user_id, self._cache[user_id])
+
+    async def add_member_value(self, user_id: str, delta: int) -> int:
+        self.ensure_member(user_id)
+        new = max(0, self._cache[user_id] + int(delta))
+        self._cache[user_id] = new
+        await self._log(user_id, new)
+        return new
 
     def get_all_member_values(self) -> Dict[str, int]:
-        cur = self.conn.execute("SELECT user_id, value FROM members")
-        return {uid: val for uid, val in cur.fetchall()}
+        return self._cache.copy()
 
     def get_member_ranking(self, user_id: str) -> Tuple[int, int, int]:
-        cur = self.conn.execute("SELECT user_id, value FROM members ORDER BY value DESC")
-        rows = cur.fetchall()
-        total = len(rows)
+        items = sorted(self._cache.items(), key=lambda x: x[1], reverse=True)
+        total = len(items)
         user_val = self.get_member_value(user_id)
-        for rank, (uid, _) in enumerate(rows, 1):
+        for rank, (uid, _) in enumerate(items, 1):
             if uid == user_id:
                 return rank, total, user_val
         return total + 1, total, user_val
 
 
 # ---------- singleton ----------
-_DM = DataManager()
+_DM = None  # filled on cog load
 
-# public API
-ensure_member   = _DM.ensure_member
-get_member_value = _DM.get_member_value
-set_member_value = _DM.set_member_value
-get_all_member_values = _DM.get_all_member_values
-get_member_ranking    = _DM.get_member_ranking
 
-# drop-in object for legacy bot.py
-data_manager = _DM
+# ---------- public sync wrappers ----------
+def ensure_member(uid: str) -> None:
+    _DM.ensure_member(uid)
+
+def get_member_value(uid: str) -> int:
+    return _DM.get_member_value(uid)
+
+async def set_member_value(uid: str, value: int) -> int:
+    await _DM.set_member_value(uid, value)
+
+async def add_member_value(uid: str, delta: int) -> int:
+    return await _DM.add_member_value(uid, delta)
+
+def get_all_member_values() -> Dict[str, int]:
+    return _DM.get_all_member_values()
+
+def get_member_ranking(uid: str) -> Tuple[int, int, int]:
+    return _DM.get_member_ranking(uid)
+
+def get_data_filename() -> str:
+    return ":memory: (ledger channel)"
+
+
+# ---------- drop-in object ----------
+data_manager = None  # filled on cog load
+
+
+# ---------- cog loader ----------
+class ValueLedgerCog(commands.Cog):
+    def __init__(self, bot: commands.Bot) -> None:
+        global _DM, data_manager
+        _DM = DataManager(bot)
+        data_manager = _DM  # legacy compat
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(ValueLedgerCog(bot))
