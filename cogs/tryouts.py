@@ -100,32 +100,40 @@ class EvaluatorView(discord.ui.View):
         super().__init__(timeout=600)
         self.on_submit = on_submit
         
-        # Initialize all selects as None
+        # Initialize all selects as None first
         self.sel_shoot: Optional[RatingSelect] = None
         self.sel_pass: Optional[RatingSelect] = None
         self.sel_def: Optional[RatingSelect] = None
         self.sel_drib: Optional[RatingSelect] = None
         self.sel_gk: Optional[RatingSelect] = None
 
-        # Common metrics (all positions)
-        self.sel_def = RatingSelect("Defending", row=0)
-        self.sel_pass = RatingSelect("Passing", row=1)
-        self.add_item(self.sel_def)
-        self.add_item(self.sel_pass)
-
-        # Position-specific metrics
+        # Layout based on position
         if position == "GK":
-            self.sel_gk = RatingSelect("Goalkeeping", row=2)
+            # GK metrics: goalkeeping, defending, passing
+            self.sel_gk = RatingSelect("Goalkeeping", row=0)
+            self.sel_def = RatingSelect("Defending", row=1)
+            self.sel_pass = RatingSelect("Passing", row=2)
+            
             self.add_item(self.sel_gk)
-            button_row = 3  # GK uses only 3 rows of selects
+            self.add_item(self.sel_def)
+            self.add_item(self.sel_pass)
+            
+            button_row = 3
         else:
-            self.sel_shoot = RatingSelect("Shooting", row=2)
-            self.sel_drib = RatingSelect("Dribbling", row=3)
+            # Outfield metrics: shooting, dribbling, passing, defending
+            self.sel_shoot = RatingSelect("Shooting", row=0)
+            self.sel_drib = RatingSelect("Dribbling", row=1)
+            self.sel_pass = RatingSelect("Passing", row=2)
+            self.sel_def = RatingSelect("Defending", row=3)
+            
             self.add_item(self.sel_shoot)
             self.add_item(self.sel_drib)
-            button_row = 4  # Outfield uses 4 rows of selects
+            self.add_item(self.sel_pass)
+            self.add_item(self.sel_def)
+            
+            button_row = 4
 
-        # Submit button – always last row (3 for GK, 4 for outfield)
+        # Submit button
         button = discord.ui.Button(
             label="Submit Ratings",
             style=discord.ButtonStyle.success,
@@ -135,20 +143,33 @@ class EvaluatorView(discord.ui.View):
         self.add_item(button)
 
     async def _submit(self, interaction: discord.Interaction):
-        # Collect all non-None selects
-        need = []
-        for sel in (self.sel_shoot, self.sel_pass, self.sel_def, self.sel_drib, self.sel_gk):
-            if sel is not None:
-                need.append(sel)
-        
-        missing = [s.metric for s in need if s.score is None]
-        if missing:
-            await interaction.response.send_message(f"Missing: {', '.join(missing)}", ephemeral=True)
-            return
-        
-        payload = {s.metric: s.score for s in need}
-        await interaction.response.send_message("Submitted. ✅", ephemeral=True)
-        await self.on_submit(payload)
+        try:
+            # Collect metrics based on position
+            if hasattr(self, 'sel_gk') and self.sel_gk is not None:
+                # GK
+                need = [self.sel_gk, self.sel_def, self.sel_pass]
+                log.info(f"GK submission: collecting {len(need)} metrics")
+            else:
+                # Outfield
+                need = [self.sel_shoot, self.sel_drib, self.sel_pass, self.sel_def]
+                log.info(f"Outfield submission: collecting {len(need)} metrics")
+            
+            missing = [s.metric for s in need if s.score is None]
+            if missing:
+                log.warning(f"Missing metrics: {missing}")
+                await interaction.response.send_message(f"Missing: {', '.join(missing)}", ephemeral=True)
+                return
+            
+            payload = {s.metric: s.score for s in need}
+            log.info(f"Submitting scores: {payload}")
+            
+            await interaction.response.send_message("Submitted. ✅", ephemeral=True)
+            await self.on_submit(payload)
+            log.info("on_submit callback completed successfully")
+            
+        except Exception as e:
+            log.error(f"Error in _submit: {e}\n{traceback.format_exc()}")
+            await interaction.response.send_message("Error processing submission. Check logs.", ephemeral=True)
 
 
 def mommy_embed(title: str, description: str, user: discord.Member) -> discord.Embed:
@@ -264,59 +285,89 @@ class Tryouts(commands.Cog):
             emb.set_footer(text="Select ratings (1–10) then submit.")
 
             async def on_submit(scores: Dict[str, int]):
-                value_m = self._compute_value(sess.position, scores)
-                uid = str(member.id)
-                await data_manager.ensure_member(uid)
-                await data_manager.set_member_value(uid, value_m)
-
-                # add evaluated role
                 try:
-                    role_ok = ctx.guild.get_role(EVALUATED_ROLE_ID)
-                    if role_ok:
-                        mem = ctx.guild.get_member(member.id) or await ctx.guild.fetch_member(member.id)
-                        if mem and role_ok not in mem.roles:
-                            await mem.add_roles(role_ok, reason="Novera: value set after tryout")
-                except Exception:
-                    log.exception("add role failed after tryout")
+                    log.info(f"on_submit started for {member.id} with scores: {scores}")
+                    
+                    value_m = self._compute_value(sess.position, scores)
+                    log.info(f"Computed value: ¥{value_m:,}M")
+                    
+                    uid = str(member.id)
+                    await data_manager.ensure_member(uid)
+                    log.info(f"ensure_member called for {uid}")
+                    
+                    await data_manager.set_member_value(uid, value_m)
+                    log.info(f"set_member_value called: ¥{value_m:,}M")
 
-                # results embed
-                results_ch = self.bot.get_channel(RESULTS_CHANNEL_ID)
-                if results_ch:
-                    bar = lambda v: "🟨"*v + "⬜"*(10-v)
-                    emb_results = discord.Embed(
-                        title="💋 Mommy’s verdict is in~",
-                        description=f"{member.mention} just finished their try-out!",
-                        color=discord.Color.purple()
-                    )
-                    for metric, val in scores.items():
-                        emb_results.add_field(name=f"{metric.capitalize()} {val}/10", value=bar(val), inline=False)
-                    emb_results.add_field(name="💰 Final valuation", value=f"**¥{value_m:,}M**", inline=False)
-                    if member.avatar:
-                        emb_results.set_thumbnail(url=member.avatar.url)
-                    await results_ch.send(embed=emb_results)
+                    # add evaluated role
+                    try:
+                        role_ok = ctx.guild.get_role(EVALUATED_ROLE_ID)
+                        if role_ok:
+                            mem = ctx.guild.get_member(member.id) or await ctx.guild.fetch_member(member.id)
+                            if mem and role_ok not in mem.roles:
+                                await mem.add_roles(role_ok, reason="Novera: value set after tryout")
+                                log.info(f"Added EVALUATED_ROLE to {member.id}")
+                    except Exception as e:
+                        log.error(f"Failed to add role: {e}")
 
-                # announcement
-                announce_ch = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
-                if announce_ch:
-                    cute = [
-                        f"💕 Mommy’s proud~ {member.mention} is now worth **¥{value_m:,}M**!",
-                        f"🌸 Congrats sweetie, your new price tag is **¥{value_m:,}M**!",
-                        f"💖 Look at you grow! You’ve been valued at **¥{value_m:,}M**.",
-                        f"🎀 Mommy stamped your forehead: **¥{value_m:,}M**!"
-                    ]
-                    await announce_ch.send(random.choice(cute), allowed_mentions=discord.AllowedMentions.none())
+                    # results embed
+                    results_ch = self.bot.get_channel(RESULTS_CHANNEL_ID)
+                    if results_ch:
+                        try:
+                            bar = lambda v: "🟨"*v + "⬜"*(10-v)
+                            emb_results = discord.Embed(
+                                title="💋 Mommy’s verdict is in~",
+                                description=f"{member.mention} just finished their try-out!",
+                                color=discord.Color.purple()
+                            )
+                            for metric, val in scores.items():
+                                emb_results.add_field(name=f"{metric.capitalize()} {val}/10", value=bar(val), inline=False)
+                            emb_results.add_field(name="💰 Final valuation", value=f"**¥{value_m:,}M**", inline=False)
+                            if member.avatar:
+                                emb_results.set_thumbnail(url=member.avatar.url)
+                            
+                            await results_ch.send(embed=emb_results)
+                            log.info(f"Sent results embed to channel {RESULTS_CHANNEL_ID}")
+                        except Exception as e:
+                            log.error(f"Failed to send results embed: {e}")
+                    else:
+                        log.error(f"Results channel {RESULTS_CHANNEL_ID} not found")
 
-                # candidate value DM
-                try:
-                    cdm = await member.create_dm()
-                    await cdm.send(f"🏅 Your Novera value has been set to **¥{value_m:,}M**. Congratulations!")
-                except Exception:
-                    pass
+                    # announcement
+                    announce_ch = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
+                    if announce_ch:
+                        try:
+                            cute = [
+                                f"💕 Mommy’s proud~ {member.mention} is now worth **¥{value_m:,}M**!",
+                                f"🌸 Congrats sweetie, your new price tag is **¥{value_m:,}M**!",
+                                f"💖 Look at you grow! You’ve been valued at **¥{value_m:,}M**.",
+                                f"🎀 Mommy stamped your forehead: **¥{value_m:,}M**!"
+                            ]
+                            await announce_ch.send(random.choice(cute), allowed_mentions=discord.AllowedMentions.none())
+                            log.info(f"Sent announcement to channel {ANNOUNCE_CHANNEL_ID}")
+                        except Exception as e:
+                            log.error(f"Failed to send announcement: {e}")
+                    else:
+                        log.error(f"Announcement channel {ANNOUNCE_CHANNEL_ID} not found")
 
-                self.sessions.pop(self._key(ctx.guild.id, member.id), None)
+                    # DM candidate
+                    try:
+                        cdm = await member.create_dm()
+                        await cdm.send(f"🏅 Your Novera value has been set to **¥{value_m:,}M**. Congratulations!")
+                        log.info(f"Sent DM to candidate {member.id}")
+                    except Exception as e:
+                        log.error(f"Failed to DM candidate: {e}")
+
+                    self.sessions.pop(self._key(ctx.guild.id, member.id), None)
+                    log.info("on_submit completed successfully")
+                    
+                except Exception as e:
+                    log.error(f"CRITICAL ERROR in on_submit: {e}\n{traceback.format_exc()}")
+                    # Don't pop session so we can retry if needed
+                    raise  # Re-raise to be caught by view error handler
 
             view = EvaluatorView(sess.position, on_submit)
             await eval_dm.send(embed=emb, view=view)
+            log.info(f"Sent evaluator DM to {ctx.author.id}")
         except Exception as e:
             log.error(f"Evaluator DM error: {e}\n{traceback.format_exc()}")
             await ctx.reply("Couldn’t open the evaluator panel. Check logs.", mention_author=False)
@@ -328,13 +379,18 @@ class Tryouts(commands.Cog):
     def _compute_value(self, pos: str, s: Dict[str, int]) -> int:
         def g(k): return max(1, min(10, int(s.get(k, 5))))
         w = WEIGHTS.get(pos, WEIGHTS["CF"])
+        log.debug(f"Computing value for {pos} with weights {w} and scores {s}")
+        
         if pos == "GK":
             raw = g("goalkeeping")*w["goalkeeping"] + g("defending")*w["defending"] + g("passing")*w["passing"]
         else:
             raw = (g("shooting")*w["shooting"] + g("dribbling")*w["dribbling"] +
                    g("passing")*w["passing"] + g("defending")*w["defending"])
+        
         val = int(round(raw * 10))
-        return max(MIN_VALUE, min(MAX_VALUE, val))
+        final_val = max(MIN_VALUE, min(MAX_VALUE, val))
+        log.debug(f"Raw value: {raw}, Final value: {final_val}")
+        return final_val
 
 
 async def setup(bot: commands.Bot):
