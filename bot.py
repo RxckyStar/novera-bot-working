@@ -1241,15 +1241,17 @@ async def checkvalue_command(ctx, member: Optional[discord.Member] = None):
         await animator.start()
             
         user_id = str(member.id)
-        value = data_manager.get_member_value(user_id)
+        value = await data_manager.get_member_value(user_id)  # ← await added
         
         server_id = None
         if ctx.guild:
             server_id = str(ctx.guild.id)
             
         try:
-            rank, total, member_value = data_manager.get_member_ranking(user_id)
-            ranking_text = format_ranking_message(rank, total, value, True)
+            rank, total, member_value = await data_manager.get_member_ranking(user_id)  # ← await added
+            # fake percentile: higher rank → lower percent
+            percentile = max(1, min(99, int((rank / max(total, 1)) * 100)))
+            ranking_text = format_ranking_message(rank, total, value, True) + f"\n*Top {percentile}% of all players*"
         except Exception as e:
             logging.error(f"Error getting ranking: {e}")
             ranking_text = "Ranking information not available right now."
