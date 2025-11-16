@@ -1230,7 +1230,9 @@ async def checkvalue_command(ctx, member: Optional[discord.Member] = None):
     logging.info(f"Processing checkvalue command for message ID {ctx.message.id}")
     
     try:
-        if data_manager is None:
+        # grab the live manager that the bot already owns
+        mgr = getattr(ctx.bot, "data_manager", None)
+        if mgr is None:
             await ctx.send("😔 Oh no darling, Mommy can't access your value records right now! Try again later, sweetie! 💕")
             return
             
@@ -1241,27 +1243,26 @@ async def checkvalue_command(ctx, member: Optional[discord.Member] = None):
         await animator.start()
             
         user_id = str(member.id)
-        value = await data_manager.get_member_value(user_id)  # ← await added
+        value = await mgr.get_member_value(user_id)          # ← awaited
         
-        server_id = None
-        if ctx.guild:
-            server_id = str(ctx.guild.id)
-            
+        # fake percentile: higher rank → lower percent
         try:
-            rank, total, member_value = await data_manager.get_member_ranking(user_id)  # ← await added
-            # fake percentile: higher rank → lower percent
+            rank, total, _ = await mgr.get_member_ranking(user_id)   # ← awaited
             percentile = max(1, min(99, int((rank / max(total, 1)) * 100)))
             ranking_text = format_ranking_message(rank, total, value, True) + f"\n*Top {percentile}% of all players*"
         except Exception as e:
             logging.error(f"Error getting ranking: {e}")
             ranking_text = "Ranking information not available right now."
         
+        # value-based messages
         if value == 0 and ctx.guild and str(ctx.guild.id) == "1350165280940228629":
             evaluator_channel = ctx.guild.get_channel(1350182132043223090)
-            if evaluator_channel:
-                message = f"Your value is **0**!\n\nOh sweetie, you don't have any value yet! Please head over to {evaluator_channel.mention} and ask one of the evaluators for tryouts~ 💕"
-            else:
-                message = f"Your value is **0**!\n\nOh sweetie, you don't have any value yet! Please ask one of the evaluators for tryouts~ 💕"
+            chan_mention = evaluator_channel.mention if evaluator_channel else "#evaluator"
+            message = (
+                f"Your value is **0**!\n\n"
+                f"Oh sweetie, you don't have any value yet! "
+                f"Please head over to {chan_mention} and ask one of the evaluators for tryouts~ 💕"
+            )
         elif value > 10:
             message = random.choice(MOMMY_CHECKVALUE_VARIANTS).format(value=value)
         elif value > 0:
