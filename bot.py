@@ -22,10 +22,6 @@ def _install_shutdown_handler(loop):
             # not available on this platform/event loop
             pass
 
-# ========  attach live manager to bot  ========
-bot.data_manager = data_manager   # <-- ADD THIS SINGLE LINE
-# ==============================================
-
 #!/usr/bin/env python3
 """
 Novera Assistant Discord Bot
@@ -78,6 +74,10 @@ import importlib
 import loading_animations
 from data_manager import data_manager
 
+# ========  attach live manager  ========
+bot.data_manager = data_manager   # ← ADD THIS SINGLE LINE
+# ========================================
+
 # Import proper connection error handling for Discord.py websocket connections
 # Discord.py 2.0+ uses discord.errors.ConnectionClosed
 try:
@@ -108,6 +108,9 @@ except ImportError:
 # Create a combined tuple of all the different connection error types 
 # that might be used by Discord.py or websockets
 ALL_CONNECTION_ERRORS = tuple(
+    filter(None, [ConnectionClosed, ConnectionClosedError, ConnectionClosedOK])
+)
+# Note: We're using safe_wait_for from simple_discord_fix instead of the old implementation
     filter(None, [ConnectionClosed, ConnectionClosedError, ConnectionClosedOK])
 )
 # Note: We're using safe_wait_for from simple_discord_fix instead of the old implementation
