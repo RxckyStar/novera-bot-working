@@ -1,5 +1,3 @@
-
-
 # ---------- safe-shutdown helper (added) ----------
 async def _close_down():
     logger.info("[shutdown] flushing data to disk…")
@@ -23,6 +21,11 @@ def _install_shutdown_handler(loop):
         except NotImplementedError:
             # not available on this platform/event loop
             pass
+
+# ========  attach live manager to bot  ========
+bot.data_manager = data_manager   # <-- ADD THIS SINGLE LINE
+# ==============================================
+
 #!/usr/bin/env python3
 """
 Novera Assistant Discord Bot
