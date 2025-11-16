@@ -157,6 +157,8 @@ bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 # ATTACH DATA MANAGER TO BOT - CRITICAL FIX
 bot.data_manager = data_manager
 
+# Then load your extensions...
+
 # Enhanced token validation and import with fallback mechanism
 try:
     # Check for token cache refresh flag first (from token_refresher.py)
