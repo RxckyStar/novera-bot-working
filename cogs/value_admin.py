@@ -2,14 +2,16 @@ from __future__ import annotations
 import discord
 import logging
 import random
+import traceback
 from discord.ext import commands
-import data_manager
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
-# Roles / channels (edit to your IDs)
-SETVALUE_ROLE_ID = 1350547213717209160  # who can run !setvalue
-ANNOUNCE_CHANNEL_ID = 1350172182038446184  # announcement channel
+# -------------------- CONFIG --------------------
+SETVALUE_ROLE_ID      = 1350547213717209160
+ANNOUNCE_CHANNEL_ID   = 1350172182038446184
+# -----------------------------------------------
 
 MOMMY_SET_VARIANTS = [
     "💴 Sweetie, {user} is now valued at **¥{new}M**. Mommy handled it with care.",
@@ -38,31 +40,39 @@ def mommy_embed(title: str, description: str, user: discord.Member) -> discord.E
 class ValueAdmin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # grab the live data-manager instance that the bot already owns
+        self.data_manager = getattr(bot, "data_manager", None)
 
+    # ---------- helpers ----------
+    async def _set_value(self, member: discord.Member, new: int) -> tuple[int, int]:
+        """returns (old, new)"""
+        if self.data_manager is None:
+            raise RuntimeError("data_manager not loaded")
+        uid = str(member.id)
+        old = await self.data_manager.get_member_value(uid)
+        new = max(0, int(new))
+        await self.data_manager.set_member_value(uid, new)
+        return old, new
+
+    # ---------- commands ----------
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     @commands.command(name="addvalue")
     async def addvalue(self, ctx: commands.Context, member: discord.Member, delta: int):
         """Add delta (M) to a player's value (admin-only)."""
         try:
-            uid = str(member.id)
-            old = data_manager.get_member_value(uid)
-            new = max(0, old + int(delta))
-            await data_manager.set_member_value(uid, new)   # ← await added
-
-            desc = random.choice(MOMMY_ADD_VARIANTS).format(user=member.mention, old=old, new=new, delta=(new-old))
+            old, new = await self._set_value(member, old + delta)
+            desc = random.choice(MOMMY_ADD_VARIANTS).format(
+                user=member.mention, old=old, new=new, delta=new - old)
             emb = mommy_embed("✨ Value Adjusted", desc, member)
-
             emb.add_field(name="Previous", value=f"¥{old}M", inline=True)
             emb.add_field(name="New", value=f"¥{new}M", inline=True)
-            emb.add_field(name="Change", value=f"+{new-old}M" if new >= old else f"-{old-new}M", inline=True)
+            emb.add_field(name="Change", value=f"+{new - old}M", inline=True)
 
             await ctx.send(embed=emb)
-
             ch = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
             if ch:
                 await ch.send(embed=emb)
-
         except Exception as e:
             log.exception("addvalue failed")
             await ctx.send("❌ Mommy stumbled applying that change, sweetie. Try again later.")
@@ -75,11 +85,7 @@ class ValueAdmin(commands.Cog):
             await ctx.reply("You don't have permission to use this command.", mention_author=False)
             return
         try:
-            uid = str(member.id)
-            old = data_manager.get_member_value(uid)
-            new = max(0, int(new_value))
-            await data_manager.set_member_value(uid, new)   # ← await added
-
+            old, new = await self._set_value(member, new_value)
             desc = random.choice(MOMMY_SET_VARIANTS).format(user=member.mention, new=new)
             emb = mommy_embed("💜 Value Set", desc, member)
             emb.add_field(name="Previous", value=f"¥{old}M", inline=True)
@@ -89,11 +95,9 @@ class ValueAdmin(commands.Cog):
             emb.add_field(name="Change", value=f"{sign}{delta}M", inline=True)
 
             await ctx.send(embed=emb)
-
             ch = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
             if ch:
                 await ch.send(embed=emb)
-
         except Exception as e:
             log.exception("setvalue failed")
             await ctx.send("❌ Mommy couldn't set that right now, darling.")
