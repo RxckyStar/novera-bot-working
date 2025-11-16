@@ -75,7 +75,8 @@ import loading_animations
 from data_manager import data_manager
 
 # ========  attach live manager  ========
-bot.data_manager = data_manager   # ← ADD THIS SINGLE LINE
+# We must create the bot object first, then attach the manager
+# We'll do this after the bot is created but before extensions are loaded
 # ========================================
 
 # Import proper connection error handling for Discord.py websocket connections
@@ -108,9 +109,6 @@ except ImportError:
 # Create a combined tuple of all the different connection error types 
 # that might be used by Discord.py or websockets
 ALL_CONNECTION_ERRORS = tuple(
-    filter(None, [ConnectionClosed, ConnectionClosedError, ConnectionClosedOK])
-)
-# Note: We're using safe_wait_for from simple_discord_fix instead of the old implementation
     filter(None, [ConnectionClosed, ConnectionClosedError, ConnectionClosedOK])
 )
 # Note: We're using safe_wait_for from simple_discord_fix instead of the old implementation
