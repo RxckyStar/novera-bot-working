@@ -74,10 +74,8 @@ import importlib
 import loading_animations
 from data_manager import data_manager
 
-# ========  attach live manager  ========
-# We must create the bot object first, then attach the manager
-# We'll do this after the bot is created but before extensions are loaded
-# ========================================
+# IMPORTANT: wait until bot = commands.Bot(...) is created before attaching
+# DO NOT put bot.data_manager = data_manager here - bot doesn't exist yet
 
 # Import proper connection error handling for Discord.py websocket connections
 # Discord.py 2.0+ uses discord.errors.ConnectionClosed
@@ -155,6 +153,9 @@ COMMAND_PREFIX = "!"
 
 # Create bot instance with intents
 bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
+
+# ATTACH DATA MANAGER TO BOT - CRITICAL FIX
+bot.data_manager = data_manager
 
 # Enhanced token validation and import with fallback mechanism
 try:
