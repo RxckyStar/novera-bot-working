@@ -2,16 +2,14 @@ from __future__ import annotations
 import discord
 import logging
 import random
-import traceback
 from discord.ext import commands
 from typing import Optional
 
 log = logging.getLogger(__name__)
 
-# -------------------- CONFIG --------------------
-SETVALUE_ROLE_ID      = 1350547213717209160
-ANNOUNCE_CHANNEL_ID   = 1350172182038446184
-# -----------------------------------------------
+# Roles / channels
+SETVALUE_ROLE_ID = 1350547213717209160
+ANNOUNCE_CHANNEL_ID = 1350172182038446184
 
 MOMMY_SET_VARIANTS = [
     "💴 Sweetie, {user} is now valued at **¥{new}M**. Mommy handled it with care.",
@@ -24,10 +22,8 @@ MOMMY_ADD_VARIANTS = [
     "💴 Value boosted, sweetie. {user}: **¥{old}M** → **¥{new}M** (**+{delta}M**)"
 ]
 
-
 def has_role(member: discord.Member, role_id: int) -> bool:
     return any(r.id == role_id for r in member.roles)
-
 
 def mommy_embed(title: str, description: str, user: discord.Member) -> discord.Embed:
     emb = discord.Embed(title=title, description=description, color=discord.Color.purple())
@@ -36,32 +32,37 @@ def mommy_embed(title: str, description: str, user: discord.Member) -> discord.E
         emb.set_thumbnail(url=user.avatar.url)
     return emb
 
-
 class ValueAdmin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # grab the live data-manager instance that the bot already owns
+        # If manager isn't attached yet, log it but don't crash
         self.data_manager = getattr(bot, "data_manager", None)
-
-    # ---------- helpers ----------
-    async def _set_value(self, member: discord.Member, new: int) -> tuple[int, int]:
-        """returns (old, new)"""
         if self.data_manager is None:
+            log.error("⚠️  CRITICAL: bot.data_manager is None! Attach it before loading cogs!")
+        else:
+            log.info("✅ ValueAdmin cog loaded with data_manager attached")
+
+    async def _set_value(self, member: discord.Member, value: int) -> tuple[int, int]:
+        """returns (old, new) or raises RuntimeError"""
+        if self.data_manager is None:
+            log.error("data_manager is None in _set_value")
             raise RuntimeError("data_manager not loaded")
         uid = str(member.id)
         old = await self.data_manager.get_member_value(uid)
-        new = max(0, int(new))
+        new = max(0, int(value))
         await self.data_manager.set_member_value(uid, new)
         return old, new
 
-    # ---------- commands ----------
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     @commands.command(name="addvalue")
     async def addvalue(self, ctx: commands.Context, member: discord.Member, delta: int):
         """Add delta (M) to a player's value (admin-only)."""
         try:
-            old, new = await self._set_value(member, old + delta)
+            old = await self.data_manager.get_member_value(str(member.id))
+            new = max(0, old + int(delta))
+            await self.data_manager.set_member_value(str(member.id), new)
+
             desc = random.choice(MOMMY_ADD_VARIANTS).format(
                 user=member.mention, old=old, new=new, delta=new - old)
             emb = mommy_embed("✨ Value Adjusted", desc, member)
@@ -85,7 +86,10 @@ class ValueAdmin(commands.Cog):
             await ctx.reply("You don't have permission to use this command.", mention_author=False)
             return
         try:
-            old, new = await self._set_value(member, new_value)
+            old = await self.data_manager.get_member_value(str(member.id))
+            new = max(0, int(new_value))
+            await self.data_manager.set_member_value(str(member.id), new)
+
             desc = random.choice(MOMMY_SET_VARIANTS).format(user=member.mention, new=new)
             emb = mommy_embed("💜 Value Set", desc, member)
             emb.add_field(name="Previous", value=f"¥{old}M", inline=True)
@@ -101,7 +105,6 @@ class ValueAdmin(commands.Cog):
         except Exception as e:
             log.exception("setvalue failed")
             await ctx.send("❌ Mommy couldn't set that right now, darling.")
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ValueAdmin(bot))
