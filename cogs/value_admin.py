@@ -3,7 +3,6 @@ import discord
 import logging
 import random
 from discord.ext import commands
-from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -35,23 +34,13 @@ def mommy_embed(title: str, description: str, user: discord.Member) -> discord.E
 class ValueAdmin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # If manager isn't attached yet, log it but don't crash
-        self.data_manager = getattr(bot, "data_manager", None)
-        if self.data_manager is None:
-            log.error("⚠️  CRITICAL: bot.data_manager is None! Attach it before loading cogs!")
-        else:
-            log.info("✅ ValueAdmin cog loaded with data_manager attached")
 
-    async def _set_value(self, member: discord.Member, value: int) -> tuple[int, int]:
-        """returns (old, new) or raises RuntimeError"""
-        if self.data_manager is None:
-            log.error("data_manager is None in _set_value")
-            raise RuntimeError("data_manager not loaded")
-        uid = str(member.id)
-        old = await self.data_manager.get_member_value(uid)
-        new = max(0, int(value))
-        await self.data_manager.set_member_value(uid, new)
-        return old, new
+    def _get_manager(self):
+        """Get the live data manager from bot"""
+        mgr = getattr(self.bot, "data_manager", None)
+        if mgr is None:
+            raise RuntimeError("bot.data_manager not attached! Did you forget 'bot.data_manager = data_manager' in bot.py?")
+        return mgr
 
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
@@ -59,9 +48,11 @@ class ValueAdmin(commands.Cog):
     async def addvalue(self, ctx: commands.Context, member: discord.Member, delta: int):
         """Add delta (M) to a player's value (admin-only)."""
         try:
-            old = await self.data_manager.get_member_value(str(member.id))
+            mgr = self._get_manager()
+            uid = str(member.id)
+            old = await mgr.get_member_value(uid)
             new = max(0, old + int(delta))
-            await self.data_manager.set_member_value(str(member.id), new)
+            await mgr.set_member_value(uid, new)
 
             desc = random.choice(MOMMY_ADD_VARIANTS).format(
                 user=member.mention, old=old, new=new, delta=new - old)
@@ -86,9 +77,11 @@ class ValueAdmin(commands.Cog):
             await ctx.reply("You don't have permission to use this command.", mention_author=False)
             return
         try:
-            old = await self.data_manager.get_member_value(str(member.id))
+            mgr = self._get_manager()
+            uid = str(member.id)
+            old = await mgr.get_member_value(uid)
             new = max(0, int(new_value))
-            await self.data_manager.set_member_value(str(member.id), new)
+            await mgr.set_member_value(uid, new)
 
             desc = random.choice(MOMMY_SET_VARIANTS).format(user=member.mention, new=new)
             emb = mommy_embed("💜 Value Set", desc, member)
