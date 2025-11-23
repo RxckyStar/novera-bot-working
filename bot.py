@@ -1233,42 +1233,51 @@ except Exception as e:
 
 @bot.command(name="checkvalue")
 async def checkvalue_command(ctx, member: Optional[discord.Member] = None):
-    """Check the user's value from the data manager"""
+    """Check the user's yen value."""
     logging.info(f"Processing checkvalue command for message ID {ctx.message.id}")
-    
+
     try:
-        # grab the live manager that the bot already owns
-        mgr = getattr(ctx.bot, "data_manager", None)
+        # --- Load the SAME DataManager instance used by everything else ---
+        from data_manager import data_manager as mgr
+
         if mgr is None:
-            await ctx.send("😔 Oh no darling, Mommy can't access your value records right now! Try again later, sweetie! 💕")
+            await ctx.send(
+                "😔 Oh no darling, Mommy can't access your value records right now! Try again later, sweetie! 💕"
+            )
             return
-            
+
         if not member:
             member = ctx.author
-        
+
+        # start loading animation
         animator = loading_animations.LoadingAnimator(ctx)
         await animator.start()
-            
+
         user_id = str(member.id)
-        value = await mgr.get_member_value(user_id)          # ← awaited
-        
-        # fake percentile: higher rank → lower percent
+
+        # ✔️ FIX: use sync methods (NO await)
+        value = mgr.get_member_value(user_id)
+
+        # ranking data
         try:
-            rank, total, _ = await mgr.get_member_ranking(user_id)   # ← awaited
+            rank, total, _ = mgr.get_member_ranking(user_id)
             percentile = max(1, min(99, int((rank / max(total, 1)) * 100)))
-            ranking_text = format_ranking_message(rank, total, value, True) + f"\n*Top {percentile}% of all players*"
+            ranking_text = (
+                format_ranking_message(rank, total, value, True)
+                + f"\n*Top {percentile}% of all players*"
+            )
         except Exception as e:
-            logging.error(f"Error getting ranking: {e}")
+            logging.error(f"Ranking error: {e}")
             ranking_text = "Ranking information not available right now."
-        
-        # value-based messages
+
+        # mommy text logic
         if value == 0 and ctx.guild and str(ctx.guild.id) == "1350165280940228629":
             evaluator_channel = ctx.guild.get_channel(1350182132043223090)
-            chan_mention = evaluator_channel.mention if evaluator_channel else "#evaluator"
+            chan = evaluator_channel.mention if evaluator_channel else "#evaluator"
             message = (
                 f"Your value is **0**!\n\n"
                 f"Oh sweetie, you don't have any value yet! "
-                f"Please head over to {chan_mention} and ask one of the evaluators for tryouts~ 💕"
+                f"Please head over to {chan} and ask an evaluator for a tryout~ 💕"
             )
         elif value > 10:
             message = random.choice(MOMMY_CHECKVALUE_VARIANTS).format(value=value)
@@ -1276,27 +1285,32 @@ async def checkvalue_command(ctx, member: Optional[discord.Member] = None):
             message = random.choice(MOMMY_LOW_VALUE_VARIANTS).format(value=value)
         else:
             message = random.choice(MOMMY_ZERO_VALUE_VARIANTS).format(value=value)
-        
+
+        # embed
         embed = discord.Embed(
             title=f"✨ {member.display_name}'s Value ✨",
             description=message,
             color=discord.Color.purple()
         )
-        
         embed.add_field(name="Ranking", value=ranking_text, inline=False)
-        
+
         if member.avatar:
             embed.set_thumbnail(url=member.avatar.url)
-            
+
+        # finish animation with embed
         await animator.stop(final_embed=embed)
-        logging.info(f"Checkvalue command executed by {ctx.author} for {user_id} - value: {value}")
-        
+
+        logging.info(
+            f"Checkvalue OK for {user_id} — value {value}"
+        )
+
     except Exception as e:
-        error_msg = f"Error in checkvalue command: {e}"
-        logging.error(error_msg)
+        logging.error(f"Error in checkvalue: {e}")
         logging.error(traceback.format_exc())
         try:
-            await ctx.send(f"{random.choice(MOMMY_ERROR_VARIANTS)}\n\n*Error: {str(e)}*")
+            await ctx.send(
+                f"{random.choice(MOMMY_ERROR_VARIANTS)}\n\n*Error: {str(e)}*"
+            )
         except:
             pass
 
