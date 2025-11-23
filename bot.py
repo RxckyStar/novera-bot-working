@@ -2526,9 +2526,18 @@ async def addvalue_command(ctx, *, args=""):
             
         # Get the member's current value and update it
         user_id = str(member.id)
-        old_value = data_manager.get_member_value(user_id)
-        new_value = old_value + amount
-        data_manager.set_member_value(user_id, new_value)
+        # Get the member's current value and update it
+mgr = getattr(ctx.bot, "data_manager", None)
+if mgr is None:
+    await ctx.send("😔 Mommy can’t adjust values right now, sweetie~ Try again later 💕")
+    return
+
+user_id = str(member.id)
+
+old_value = mgr.get_member_value(user_id)
+new_value = old_value + amount
+
+await mgr.set_member_value(user_id, new_value)
         
         # Create an embed for better presentation with varied messages
         embed = discord.Embed(
