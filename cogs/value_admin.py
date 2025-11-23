@@ -1,103 +1,168 @@
+# cogs/value_admin.py
+# Admin-only value tools (setvalue)
+# This file is EDIT-ONLY version, designed to work with existing data_manager + checkvalue/addvalue.
+
 from __future__ import annotations
-import discord
+
 import logging
 import random
+from datetime import datetime
+from typing import Optional
+
+import discord
 from discord.ext import commands
 
-log = logging.getLogger(__name__)
+import data_manager  # uses the same backend as checkvalue/addvalue
 
-# Roles / channels
-SETVALUE_ROLE_ID = 1350547213717209160
-ANNOUNCE_CHANNEL_ID = 1350172182038446184
+logger = logging.getLogger(__name__)
 
-MOMMY_SET_VARIANTS = [
-    "💴 Sweetie, {user} is now valued at **¥{new}M**. Mommy handled it with care.",
-    "💴 All set, darling. {user}'s value is **¥{new}M** now~",
-    "💴 Update complete, cutie. {user} stands at **¥{new}M**."
+# ====== CONFIG ======
+SETVALUE_ROLE_ID = 1350547213717209160      # role allowed to use !setvalue
+EVALUATED_ROLE_ID = 1350863646187716640     # role to give after value is set
+TRYOUT_PENDING_ROLE_ID = 1350864967674630144  # role to REMOVE when value is finalized
+
+# Mommy-style text variants
+SETVALUE_SUCCESS_VARIANTS = [
+    "💴 New value locked in, sweetie. Mommy updated your price on the market.",
+    "💴 Adjustment complete, darling. Your Novera value has been refreshed.",
+    "💴 All done, cutie. Your yen value is now up to date.",
 ]
-MOMMY_ADD_VARIANTS = [
-    "💴 Adjustment done, love. {user} moved from **¥{old}M** → **¥{new}M** (**+{delta}M**).",
-    "💴 Tweak applied, honey. {user}: **¥{old}M** → **¥{new}M** (**+{delta}M**)",
-    "💴 Value boosted, sweetie. {user}: **¥{old}M** → **¥{new}M** (**+{delta}M**)"
+
+SETVALUE_DM_VARIANTS = [
+    "💴 Your official Novera value has been set to **{value}M ¥**. Don’t disappoint Mommy now.",
+    "💴 Congratulations, sweetie. You’re now valued at **{value}M ¥** in Novera.",
+    "💴 Your updated value is **{value}M ¥**. Go prove you’re worth every yen.",
 ]
 
-def has_role(member: discord.Member, role_id: int) -> bool:
-    return any(r.id == role_id for r in member.roles)
+SETVALUE_ERROR_VARIANTS = [
+    "😔 Oh no darling, something went wrong saving that value. Try again later, okay? 💕",
+    "😔 Mommy’s books glitched for a second—couldn’t save that value right now.",
+    "😔 Value update failed, sweetie. Let’s try that again in a bit.",
+]
 
-def mommy_embed(title: str, description: str, user: discord.Member) -> discord.Embed:
-    emb = discord.Embed(title=title, description=description, color=discord.Color.purple())
-    emb.set_footer(text="Novera • Mommy is watching ✨")
-    if user.avatar:
-        emb.set_thumbnail(url=user.avatar.url)
-    return emb
+
+def _has_setvalue_role(member: discord.Member) -> bool:
+    return any(r.id == SETVALUE_ROLE_ID for r in member.roles)
+
 
 class ValueAdmin(commands.Cog):
+    """Admin-only value management (setvalue)."""
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    def _get_manager(self):
-        """Get the live data manager from bot"""
-        mgr = getattr(self.bot, "data_manager", None)
-        if mgr is None:
-            raise RuntimeError("bot.data_manager not attached! Did you forget 'bot.data_manager = data_manager' in bot.py?")
-        return mgr
-
-    @commands.guild_only()
-    @commands.has_permissions(manage_guild=True)
-    @commands.command(name="addvalue")
-    async def addvalue(self, ctx: commands.Context, member: discord.Member, delta: int):
-        """Add delta (M) to a player's value (admin-only)."""
-        try:
-            mgr = self._get_manager()
-            uid = str(member.id)
-            old = await mgr.get_member_value(uid)
-            new = max(0, old + int(delta))
-            await mgr.set_member_value(uid, new)
-
-            desc = random.choice(MOMMY_ADD_VARIANTS).format(
-                user=member.mention, old=old, new=new, delta=new - old)
-            emb = mommy_embed("✨ Value Adjusted", desc, member)
-            emb.add_field(name="Previous", value=f"¥{old}M", inline=True)
-            emb.add_field(name="New", value=f"¥{new}M", inline=True)
-            emb.add_field(name="Change", value=f"+{new - old}M", inline=True)
-
-            await ctx.send(embed=emb)
-            ch = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
-            if ch:
-                await ch.send(embed=emb)
-        except Exception as e:
-            log.exception("addvalue failed")
-            await ctx.send("❌ Mommy stumbled applying that change, sweetie. Try again later.")
+    # -------------- SETVALUE COMMAND --------------
 
     @commands.guild_only()
     @commands.command(name="setvalue")
-    async def setvalue(self, ctx: commands.Context, member: discord.Member, new_value: int):
-        """Set a player's value exactly (role-gated)."""
-        if not isinstance(ctx.author, discord.Member) or not has_role(ctx.author, SETVALUE_ROLE_ID):
-            await ctx.reply("You don't have permission to use this command.", mention_author=False)
+    async def setvalue_command(
+        self,
+        ctx: commands.Context,
+        member: Optional[discord.Member] = None,
+        amount: Optional[int] = None,
+    ):
+        """
+        Set a player's value in millions of yen.
+        Usage: !setvalue @user 77   -> sets value to 77M ¥
+        Restricted to SETVALUE_ROLE_ID.
+        """
+        # Permission check
+        if not isinstance(ctx.author, discord.Member) or not _has_setvalue_role(ctx.author):
+            await ctx.reply(
+                "😼 Oh honey, only Mommy’s little accountants can touch the value board.",
+                mention_author=False,
+            )
             return
+
+        # Argument validation
+        if member is None or amount is None:
+            await ctx.reply(
+                "💴 Usage: `!setvalue @user 77`\n"
+                "That sets their value to **77M ¥**, sweetie.",
+                mention_author=False,
+            )
+            return
+
+        if amount < 0:
+            await ctx.reply(
+                "💴 Value can’t be negative, darling. Even benchwarmers are worth at least **0M ¥**.",
+                mention_author=False,
+            )
+            return
+
+        target_id = str(member.id)
+
+        # --- Backend: use the SAME functions as checkvalue/addvalue ---
         try:
-            mgr = self._get_manager()
-            uid = str(member.id)
-            old = await mgr.get_member_value(uid)
-            new = max(0, int(new_value))
-            await mgr.set_member_value(uid, new)
-
-            desc = random.choice(MOMMY_SET_VARIANTS).format(user=member.mention, new=new)
-            emb = mommy_embed("💜 Value Set", desc, member)
-            emb.add_field(name="Previous", value=f"¥{old}M", inline=True)
-            emb.add_field(name="New", value=f"¥{new}M", inline=True)
-            delta = new - old
-            sign = "+" if delta >= 0 else ""
-            emb.add_field(name="Change", value=f"{sign}{delta}M", inline=True)
-
-            await ctx.send(embed=emb)
-            ch = self.bot.get_channel(ANNOUNCE_CHANNEL_ID)
-            if ch:
-                await ch.send(embed=emb)
+            old_value = data_manager.get_member_value(target_id)
         except Exception as e:
-            log.exception("setvalue failed")
-            await ctx.send("❌ Mommy couldn't set that right now, darling.")
+            logger.error(f"[setvalue] get_member_value failed for {target_id}: {e}")
+            await ctx.reply(random.choice(SETVALUE_ERROR_VARIANTS), mention_author=False)
+            return
+
+        try:
+            # clamp to non-negative int
+            new_value = max(0, int(amount))
+
+            # This calls DataManager under the hood (same as addvalue / checkvalue)
+            data_manager.set_member_value(target_id, new_value)
+        except Exception as e:
+            logger.error(f"[setvalue] set_member_value failed for {target_id}: {e}", exc_info=True)
+            await ctx.reply(random.choice(SETVALUE_ERROR_VARIANTS), mention_author=False)
+            return
+
+        # Role updates (in guild only)
+        if ctx.guild:
+            try:
+                eval_role = ctx.guild.get_role(EVALUATED_ROLE_ID)
+                pending_role = ctx.guild.get_role(TRYOUT_PENDING_ROLE_ID)
+
+                # Give evaluated role
+                if eval_role and eval_role not in member.roles:
+                    await member.add_roles(eval_role, reason="Novera: value set via !setvalue")
+
+                # Remove pending tryout role
+                if pending_role and pending_role in member.roles:
+                    await member.remove_roles(pending_role, reason="Novera: value finalized via !setvalue")
+            except Exception as e:
+                logger.warning(f"[setvalue] Failed updating roles for {member.id}: {e}")
+
+        # Prepare embed (match style / vibe of existing Mommy embeds)
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        diff = new_value - (old_value or 0)
+        change_str = f"{'+' if diff >= 0 else ''}{diff}M ¥"
+
+        embed = discord.Embed(
+            title="💴 Novera Value Adjustment",
+            description=random.choice(SETVALUE_SUCCESS_VARIANTS),
+            color=discord.Color.purple(),
+        )
+
+        embed.add_field(name="👤 Player", value=f"{member.mention}\n`{member.id}`", inline=False)
+        embed.add_field(name="Old Value", value=f"{old_value}M ¥", inline=True)
+        embed.add_field(name="New Value", value=f"{new_value}M ¥", inline=True)
+        embed.add_field(name="Change", value=change_str, inline=True)
+        embed.add_field(name="Adjusted By", value=f"{ctx.author.mention}", inline=True)
+        embed.add_field(name="Timestamp", value=now, inline=True)
+
+        if member.avatar:
+            embed.set_thumbnail(url=member.avatar.url)
+
+        await ctx.reply(embed=embed, mention_author=False)
+
+        # DM the player about their updated value (if possible)
+        try:
+            dm_text = random.choice(SETVALUE_DM_VARIANTS).format(value=new_value)
+            dm = await member.create_dm()
+            await dm.send(dm_text)
+        except Exception as e:
+            logger.info(f"[setvalue] Could not DM player {member.id} about new value: {e}")
+
+        logger.info(
+            f"[setvalue] {ctx.author} set value for {member} ({member.id}) "
+            f"from {old_value}M to {new_value}M"
+        )
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ValueAdmin(bot))
