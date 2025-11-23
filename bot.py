@@ -2965,7 +2965,12 @@ async def rankings_command(ctx):
             return
         
         # ✅ USE THE INSTANCE, NOT THE MODULE
-        member_values = data_manager.get_all_member_values()
+      mgr = getattr(ctx.bot, "data_manager", None)
+if mgr is None:
+    await ctx.send("Mommy can't access values right now, sweetie~ 💕")
+    return
+
+member_values = mgr.get_all_member_values()
         if not member_values:
             await ctx.send("No members have a value yet, darling~ 💖")
             return
