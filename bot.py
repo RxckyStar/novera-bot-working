@@ -2538,6 +2538,7 @@ old_value = mgr.get_member_value(user_id)
 new_value = old_value + amount
 
 await mgr.set_member_value(user_id, new_value)
+
         
         # Create an embed for better presentation with varied messages
         embed = discord.Embed(
