@@ -2524,22 +2524,24 @@ async def addvalue_command(ctx, *, args=""):
             await ctx.send("Oh darling, that's not a valid number! Please use `+X` to add or `-X` to subtract value~ 💕")
             return
             
-        # Get the member's current value and update it
+        # ------------- FIXED VALUE SYSTEM BLOCK -------------
+        mgr = getattr(ctx.bot, "data_manager", None)
+        if mgr is None:
+            await ctx.send("😔 Mommy can’t adjust values right now, sweetie~ Try again later 💕")
+            return
+
         user_id = str(member.id)
-        # Get the member's current value and update it
-mgr = getattr(ctx.bot, "data_manager", None)
-if mgr is None:
-    await ctx.send("😔 Mommy can’t adjust values right now, sweetie~ Try again later 💕")
-    return
 
-user_id = str(member.id)
+        # Pull old value
+        old_value = mgr.get_member_value(user_id)
 
-old_value = mgr.get_member_value(user_id)
-new_value = old_value + amount
+        # Compute new
+        new_value = old_value + amount
 
-await mgr.set_member_value(user_id, new_value)
+        # Write to ledger + update cache
+        await mgr.set_member_value(user_id, new_value)
+        # -----------------------------------------------------
 
-        
         # Create an embed for better presentation with varied messages
         embed = discord.Embed(
             color=discord.Color.gold() if amount > 0 else discord.Color.purple()
