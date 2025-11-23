@@ -9,79 +9,78 @@ import logging
 logger = logging.getLogger(__name__)
 
 # ---------------- CONFIG ----------------
-# This is your REAL value-log channel
 LEDGER_CH_ID = 1350172182038446184
-
-# Matches:   654338875736588288 77
-#            (userid) (value)
 LEDGER_REGEX = re.compile(r"^(\d+)\s+(-?\d+)$")
 # ----------------------------------------
 
 
+# ========== GLOBAL SINGLETON PLACEHOLDERS ==========
+# These are populated immediately on bot startup.
+_DM: "DataManager" = None
+data_manager: "DataManager" = None
+# ===================================================
+
+
 class DataManager:
     """
-    This version stores NO values on disk.
-    All values live in memory and get rebuilt
-    on startup from your value-log channel.
+    Pure in-memory value system rebuilt from your ledger channel.
+    NEVER touches disk, so Railway cannot wipe your values.
     """
 
-    def __init__(self, bot: commands.Bot) -> None:
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self._cache: dict[str, int] = {}  # in-memory only
+        self._cache: dict[str, int] = {}
+        self.ready = False               # <— NEW: prevents early access
 
-        # Rebuild values on startup
-        bot.loop.create_task(self._replay_ledger())
+        bot.loop.create_task(self._startup())
 
-    # ----------- STARTUP REPLAY -----------
-    async def _replay_ledger(self) -> None:
-        """Reads the ENTIRE value-log channel and rebuilds all values."""
+    async def _startup(self):
+        """Ensure replay completes before any commands run."""
+        await self._replay_ledger()
+        self.ready = True
+        logger.info("[VALUE-LEDGER] DataManager ready — values live.")
+
+    # ----------- LEDGER REPLAY ----------------
+    async def _replay_ledger(self):
         await self.bot.wait_until_ready()
         ch = self.bot.get_channel(LEDGER_CH_ID)
 
         if not ch:
-            logger.warning("Ledger channel not found — starting with empty cache")
+            logger.warning("Ledger channel NOT FOUND — starting with empty table")
             return
 
-        logger.info("[VALUE-LEDGER] Rebuilding values from channel history…")
+        logger.info("[VALUE-LEDGER] Rebuilding values from channel…")
 
-        # newest → oldest ensures last message is final value
+        # newest → oldest (last entry = final value)
         async for msg in ch.history(limit=None, oldest_first=False):
-            if msg.author.bot is False:
+            if not msg.content:
                 continue
-
             m = LEDGER_REGEX.match(msg.content)
-            if not m:
-                continue
+            if m:
+                uid, val = m.groups()
+                self._cache[uid] = int(val)
 
-            uid, val = m.groups()
-            self._cache[uid] = int(val)
-
-        logger.info(f"[VALUE-LEDGER] Rebuild complete — {len(self._cache)} members loaded")
+        logger.info(f"[VALUE-LEDGER] Loaded {len(self._cache)} members.")
 
     # ----------- INTERNAL LOGGING ----------
-    async def _log(self, user_id: str, value: int) -> None:
-        """Write a new value entry to the ledger channel."""
+    async def _log(self, user_id: str, value: int):
         ch = self.bot.get_channel(LEDGER_CH_ID)
         if ch:
             await ch.send(f"{user_id} {value}")
 
     # --------------- PUBLIC API --------------
-
-    def ensure_member(self, user_id: str) -> None:
-        """Ensure a member exists in cache."""
+    def ensure_member(self, user_id: str):
         self._cache.setdefault(user_id, 0)
 
     def get_member_value(self, user_id: str) -> int:
-        """Return the user's value (0 if missing)."""
         return self._cache.get(user_id, 0)
 
-    async def set_member_value(self, user_id: str, value: int) -> None:
-        """Set EXACT value for a user."""
-        self._cache[user_id] = max(0, int(value))
-        await self._log(user_id, self._cache[user_id])
+    async def set_member_value(self, user_id: str, value: int):
+        value = max(0, int(value))
+        self._cache[user_id] = value
+        await self._log(user_id, value)
 
     async def add_member_value(self, user_id: str, delta: int) -> int:
-        """Add/subtract a value amount."""
         self.ensure_member(user_id)
 
         new_val = max(0, self._cache[user_id] + int(delta))
@@ -90,34 +89,37 @@ class DataManager:
         return new_val
 
     def get_all_member_values(self) -> Dict[str, int]:
-        """Return full value cache."""
         return self._cache.copy()
 
     def get_member_ranking(self, user_id: str) -> Tuple[int, int, int]:
-        """Return (rank, total, value)."""
         sorted_members = sorted(self._cache.items(), key=lambda x: x[1], reverse=True)
         total = len(sorted_members)
-        value = self.get_member_value(user_id)
+        val = self.get_member_value(user_id)
 
         for rank, (uid, _) in enumerate(sorted_members, 1):
             if uid == user_id:
-                return rank, total, value
+                return rank, total, val
 
-        return total + 1, total, value
-
-
-# -------------- SINGLETON WRAPPERS --------------
-
-_DM = None      # real instance
-data_manager = None  # alias for legacy code
+        return total + 1, total, val
 
 
+# =====================================================
+#                   COG INITIALIZER
+# =====================================================
 class ValueLedgerCog(commands.Cog):
-    """Creates the singleton instance at load time."""
-    def __init__(self, bot: commands.Bot) -> None:
+    """Creates the global DataManager instance on startup."""
+
+    def __init__(self, bot: commands.Bot):
         global _DM, data_manager
-        _DM = DataManager(bot)
-        data_manager = _DM
+
+        if _DM is None:
+            _DM = DataManager(bot)
+            data_manager = _DM
+            logger.info("[VALUE-LEDGER] Singleton DataManager initialized")
+        else:
+            # Never create duplicates
+            data_manager = _DM
+            logger.info("[VALUE-LEDGER] DataManager already existed")
 
 
 async def setup(bot: commands.Bot):
