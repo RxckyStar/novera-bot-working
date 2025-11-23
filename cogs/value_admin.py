@@ -1,6 +1,6 @@
 # cogs/value_admin.py
 # Admin-only value tools (setvalue)
-# EDIT-ONLY version, updated to work with async ledger-based DataManager
+# This file is EDIT-ONLY version, designed to work with existing data_manager + checkvalue/addvalue.
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Optional
 import discord
 from discord.ext import commands
 
-import data_manager  # MUST use async functions now
+import data_manager  # uses the same backend as checkvalue/addvalue
 
 logger = logging.getLogger(__name__)
 
@@ -92,20 +92,27 @@ class ValueAdmin(commands.Cog):
 
         target_id = str(member.id)
 
-        # --- Backend: use the SAME functions as checkvalue/addvalue (ASYNC!) ---
+        # 🔧 Always go through the DataManager INSTANCE, not module-level funcs
+        dm = getattr(data_manager, "data_manager", None)
+        if dm is None:
+            logger.error("[setvalue] data_manager.data_manager is not initialized")
+            await ctx.reply(random.choice(SETVALUE_ERROR_VARIANTS), mention_author=False)
+            return
+
+        # --- Backend: use the SAME backend as checkvalue/addvalue ---
         try:
-            old_value = data_manager.get_member_value(target_id)
+            old_value = dm.get_member_value(target_id)
         except Exception as e:
-            logger.error(f"[setvalue] get_member_value failed for {target_id}: {e}")
+            logger.error(f"[setvalue] get_member_value failed for {target_id}: {e}", exc_info=True)
             await ctx.reply(random.choice(SETVALUE_ERROR_VARIANTS), mention_author=False)
             return
 
         try:
+            # clamp to non-negative int
             new_value = max(0, int(amount))
 
-            # FIX: MUST be awaited (ledger backend is async)
-            await data_manager.set_member_value(target_id, new_value)
-
+            # This calls DataManager under the hood (same backend as addvalue / checkvalue)
+            await dm.set_member_value(target_id, new_value)
         except Exception as e:
             logger.error(f"[setvalue] set_member_value failed for {target_id}: {e}", exc_info=True)
             await ctx.reply(random.choice(SETVALUE_ERROR_VARIANTS), mention_author=False)
@@ -127,7 +134,7 @@ class ValueAdmin(commands.Cog):
             except Exception as e:
                 logger.warning(f"[setvalue] Failed updating roles for {member.id}: {e}")
 
-        # Prepare embed
+        # Prepare embed (match style / vibe of existing Mommy embeds)
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
         diff = new_value - (old_value or 0)
         change_str = f"{'+' if diff >= 0 else ''}{diff}M ¥"
@@ -150,13 +157,13 @@ class ValueAdmin(commands.Cog):
 
         await ctx.reply(embed=embed, mention_author=False)
 
-        # DM the player
+        # DM the player about their updated value (if possible)
         try:
             dm_text = random.choice(SETVALUE_DM_VARIANTS).format(value=new_value)
-            dm = await member.create_dm()
-            await dm.send(dm_text)
+            dm_chan = await member.create_dm()
+            await dm_chan.send(dm_text)
         except Exception as e:
-            logger.info(f"[setvalue] Could not DM player {member.id}: {e}")
+            logger.info(f"[setvalue] Could not DM player {member.id} about new value: {e}")
 
         logger.info(
             f"[setvalue] {ctx.author} set value for {member} ({member.id}) "
