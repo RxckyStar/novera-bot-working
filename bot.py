@@ -6812,13 +6812,24 @@ async def on_ready():
         update_heartbeat.start()
         logging.info("Started heartbeat update task")
 
-    # --- NEW: remove duplicates that live in bot.py so cogs can register ---
+    # --- remove duplicates that live in bot.py so cogs can register ---
     bot.remove_command("addvalue")
     bot.remove_command("help")
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
-    # Load all cogs
-    cog_list = ("cogs.tryouts", "cogs.anteup", "cogs.value_admin", "cogs.help_public", "cogs.roast_clanker", "cogs.janitor", "roast_rotator.py", "db_check.py")
+    # 🔴 IMPORTANT: load data_manager FIRST so the singleton exists
+    cog_list = (
+        "data_manager",            # <- NEW, must be first
+        "cogs.tryouts",
+        "cogs.anteup",
+        "cogs.value_admin",
+        "cogs.help_public",
+        "cogs.roast_clanker",
+        "cogs.janitor",
+        "roast_rotator.py",
+        "db_check.py",
+    )
+
     for cog in cog_list:
         try:
             await bot.load_extension(cog)
@@ -6826,12 +6837,13 @@ async def on_ready():
         except Exception as e:
             logging.error(f"⚠️ Failed to load {cog}: {e}")
 
-    # Safe-shutdown hook (flush JSON on SIGTERM/SIGINT)
+    # Safe-shutdown hook (flush JSON etc. on SIGTERM/SIGINT if you use it)
     _install_shutdown_handler(bot.loop)
     logging.info("Shutdown handler installed")
 
     # Final confirmation
     print(f"🤖 Logged in as {bot.user} and all systems are running.")
+
 
 @bot.event
 async def on_disconnect():
