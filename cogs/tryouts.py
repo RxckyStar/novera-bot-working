@@ -292,7 +292,8 @@ class Tryouts(commands.Cog):
                     log.info(f"Computed value: ¥{value_m:,}M")
                     
                     uid = str(member.id)
-                    await data_manager.ensure_member(uid)
+                    # 🔧 ensure_member is SYNC in data_manager – no await
+                    data_manager.ensure_member(uid)
                     log.info(f"ensure_member called for {uid}")
                     
                     await data_manager.set_member_value(uid, value_m)
