@@ -2953,47 +2953,42 @@ async def resetall_command(ctx):
         except:
             pass
 
+from data_manager import data_manager   # ✅ FIXED IMPORT
+
 @bot.command(name="rankings")
 async def rankings_command(ctx):
-    """Show the top valued members in the server and assign ranking roles"""
-    # Log that we received the command
     logging.info(f"Rankings command received from {ctx.author.name} (ID: {ctx.author.id})")
-    
-    # Process the command without duplicate detection
-        
+
     try:
-        # Proceed only if in a guild (server)
         if not ctx.guild:
             await ctx.send("This command can only be used in a server, sweetie~ 💖")
             return
-            
-        # Get all user values
+        
+        # ✅ USE THE INSTANCE, NOT THE MODULE
         member_values = data_manager.get_all_member_values()
         if not member_values:
             await ctx.send("No members have a value yet, darling~ 💖")
             return
-            
-        # Filter to only include members in this guild
+
         guild_member_values = {}
         for member_id, value in member_values.items():
-            # Try to get the member object
             member = ctx.guild.get_member(int(member_id))
             if member:
                 guild_member_values[member_id] = value
-            
+        
         if not guild_member_values:
             await ctx.send("No members in this server have a value yet, sweetie~ 💖")
             return
-            
-        # Sort by value, highest first
-        sorted_members = sorted(guild_member_values.items(), key=lambda x: x[1], reverse=True)
         
-        # Create an embed with the top 10
+        sorted_members = sorted(guild_member_values.items(), key=lambda x: x[1], reverse=True)
+
         embed = discord.Embed(
             title="👑 Value Rankings 👑",
             description=f"Here are Mommy's most valuable members in **{ctx.guild.name}**:",
             color=discord.Color.gold()
         )
+
+        # your entire ranking code continues here unchanged...
         
         # Define the ranking roles IDs
         ranking_roles = {
