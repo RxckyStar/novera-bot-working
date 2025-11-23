@@ -1,7 +1,7 @@
 from __future__ import annotations
 import discord, logging, asyncio, random
 from discord.ext import commands
-import data_manager
+import data_manager  # uses async ledger backend now
 
 log = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def applicable_positions(mode: str) -> list[str]:
 
 # ------------- compact DM flow -------------
 class DMDuelSetup:
-    def __init__(self, user: discord.User, bot: commands.Bot):
+    def __init__(self, user: discord.User, bot: commands.Bot, stake_m: int):
         self.user = user
         self.bot = bot
         self.mode: str | None = None
@@ -94,7 +94,8 @@ class DMDuelSetup:
         self.username: str | None = None
         self.ps_link: str | None = None
         self.position: str | None = None
-        self.stake: int = 10
+        # use stake from command
+        self.stake: int = max(0, int(stake_m))
 
     async def run(self) -> tuple[str, str, str, str, str, int] | None:
         dm = await self.user.create_dm()
@@ -271,7 +272,11 @@ class TeamBoard(discord.ui.View):
             await asyncio.sleep(AUTO_CLOSE_H * 3600)
             if self.message:
                 try:
-                    await self.message.edit(content="💤 **Ad expired** – Mommy closed it after 4 hours.", embed=None, view=None)
+                    await self.message.edit(
+                        content="💤 **Ad expired** – Mommy closed it after 4 hours.",
+                        embed=None,
+                        view=None,
+                    )
                 except:
                     pass
         asyncio.create_task(_close())
@@ -283,7 +288,13 @@ class TeamBoard(discord.ui.View):
             for item in self.children:
                 if isinstance(item, PositionButton):
                     # grey out taken
-                    taken = any(p == item.pos and ((item.team == "A" and u in [x for x, _ in self.teamA]) or (item.team == "B" and u in [x for x, _ in self.teamB])) for u, p in self.teamA + self.teamB)
+                    taken = any(
+                        p == item.pos and (
+                            (item.team == "A" and u in [x for x, _ in self.teamA]) or
+                            (item.team == "B" and u in [x for x, _ in self.teamB])
+                        )
+                        for u, p in self.teamA + self.teamB
+                    )
                     item.disabled = taken
                     item.style = discord.ButtonStyle.gray if taken else discord.ButtonStyle.blurple
             await self.message.edit(embed=self._build_embed(), view=self)
@@ -294,7 +305,8 @@ class TeamBoard(discord.ui.View):
         title = random.choice(AD_TITLE_VARIANTS)
         desc = (
             random.choice(AD_DESC_VARIANTS)
-            + f"\n**Mode:** {self.mode} • **Region:** {self.region} • **Stake:** ¥{self.stake_m}M per player\n**Creator:** <@{self.creator_id}> • **Username:** {self.username}\n"
+            + f"\n**Mode:** {self.mode} • **Region:** {self.region} • **Stake:** ¥{self.stake_m}M per player\n"
+            f"**Creator:** <@{self.creator_id}> • **Username:** {self.username}\n"
             + (f"**PS Link:** {self.ps_link}\n" if self.ps_link else "")
             + f"\n{MOMMY_AD_NOTE}"
         )
@@ -376,14 +388,18 @@ class ModApproveView(discord.ui.View):
         winners = self.board.teamA if self.winner == "A" else self.board.teamB
         losers = self.board.teamB if self.winner == "A" else self.board.teamA
         stake = int(self.board.stake_m)
+
         try:
+            # Winners gain stake * opponent count
             for uid, _ in winners:
-                old = data_manager.get_member_value(str(uid))
-                data_manager.set_member_value(str(uid), old + stake * len(losers))
+                await data_manager.add_member_value(str(uid), stake * len(losers))
+
+            # Losers lose stake * opponent count
             for uid, _ in losers:
-                old = data_manager.get_member_value(str(uid))
-                data_manager.set_member_value(str(uid), max(0, old - stake * len(winners)))
+                await data_manager.add_member_value(str(uid), -stake * len(winners))
+
             await inter.response.send_message("✅ Values updated – winners paid, losers debited.", ephemeral=True)
+
             for uid, _ in self.board.teamA + self.board.teamB:
                 try:
                     user = await self.board.message.guild.fetch_member(uid)
@@ -392,6 +408,7 @@ class ModApproveView(discord.ui.View):
                 except:
                     pass
         except Exception as e:
+            log.exception("Error updating values in anteup settlement")
             await inter.response.send_message(f"Error updating values: {e}", ephemeral=True)
 
 # ------------- cog -------------
@@ -406,7 +423,7 @@ class AnteUp(commands.Cog):
         user = ctx.author
         try:
             await ctx.send(random.choice(MOMMY_CHECK_DMS), mention_author=False)
-            setup = DMDuelSetup(user, self.bot)
+            setup = DMDuelSetup(user, self.bot, stake_m)
             params = await setup.run()
             if not params:
                 return await ctx.send("DM setup cancelled, sweetie~ 💕")
@@ -416,8 +433,14 @@ class AnteUp(commands.Cog):
             if not ch:
                 return await ctx.send("I couldn’t find the channel for that mode.", mention_author=False)
 
-            board = TeamBoard(creator_id=user.id, mode=mode, region=region,
-                              username=username, ps_link=ps_link, stake_m=stake)
+            board = TeamBoard(
+                creator_id=user.id,
+                mode=mode,
+                region=region,
+                username=username,
+                ps_link=ps_link,
+                stake_m=stake,
+            )
             board.teamA.append((user.id, position))
 
             embed = board._build_embed()
