@@ -2522,18 +2522,17 @@ async def addvalue_command(ctx, *, args=""):
             await ctx.send("Oh darling, that's not a valid number! 💕")
             return
 
-        # ---- FIXED BLOCK (INDENTED CORRECTLY) ----
+        # Get data manager
         mgr = getattr(ctx.bot, "data_manager", None)
         if mgr is None:
             await ctx.send("😔 Mommy can’t adjust values right now, sweetie~ Try again later 💕")
             return
 
         user_id = str(member.id)
-        old_value = mgr.get_member_value(user_id)
+        old_value = await mgr.get_member_value(user_id)
         new_value = old_value + amount
 
         await mgr.set_member_value(user_id, new_value)
-        # ------------------------------------------
 
         # Build response embed
         embed = discord.Embed(
