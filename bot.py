@@ -2474,131 +2474,110 @@ async def sm_command(ctx, *, message=None):
 async def addvalue_command(ctx, *, args=""):
     """Trainer-only command to add or subtract value from a member"""
     logging.info(f"Processing addvalue command for message ID {ctx.message.id}")
-    
+
     try:
         # Check if user has permission (trainers role or owner)
         has_permission = False
-        
+
         # Allow bot owner or Rxcky
-        if ctx.author.id == 859413883420016640 or ctx.author.id == 654338875736588288:
+        if ctx.author.id in (859413883420016640, 654338875736588288):
             has_permission = True
-        # Check for trainers role in Novera server
-        elif ctx.guild and str(ctx.guild.id) == "1350165280940228629":  # Novera Team Hub
-            trainer_role_id = "1350175902738419734"  # Trainers role in Novera server
+
+        # Trainers role (only in Novera Hub)
+        elif ctx.guild and str(ctx.guild.id) == "1350165280940228629":
+            trainer_role_id = "1350175902738419734"
             has_permission = any(str(role.id) == trainer_role_id for role in ctx.author.roles)
-            
+
         if not has_permission:
             await ctx.send(random.choice(MOMMY_PERMISSION_DENIED))
             return
-            
-        # Parse the arguments
+
+        # Parse arguments
         args_parts = args.split()
         if len(args_parts) < 2:
             await ctx.send("Oh darling, you need to specify both a member and an amount! 💖\nUse `!addvalue @user +5` or `!addvalue @user -5`")
             return
-            
-        # First argument should be the member mention
+
+        # Member mention required
         if not ctx.message.mentions:
-            await ctx.send("Oh sweetie, you need to mention the member you want to add value to! 💖\nUse `!addvalue @user +5` or `!addvalue @user -5`")
+            await ctx.send("Oh sweetie, you need to mention the member you want to add value to! 💖")
             return
-            
+
         member = ctx.message.mentions[0]
-        amount_str = args_parts[-1]  # Last argument should be the amount
-        
-        # Parse the amount value
+        amount_str = args_parts[-1]
+
+        # Parse amount
         try:
-            if amount_str.startswith('+'):
+            if amount_str.startswith("+"):
                 amount = int(amount_str[1:])
-            elif amount_str.startswith('-'):
+            elif amount_str.startswith("-"):
                 amount = -int(amount_str[1:])
             else:
                 amount = int(amount_str)
-                
+
             if amount == 0:
                 await ctx.send("Oh sweetie, the amount needs to be a non-zero value! 💕")
                 return
         except ValueError:
             await ctx.send("Oh darling, that's not a valid number! 💕")
             return
-            
-        # -------------------------------
-        # GET DATA MANAGER (FIXED BLOCK)
-        # -------------------------------
+
+        # ---- FIXED BLOCK (INDENTED CORRECTLY) ----
         mgr = getattr(ctx.bot, "data_manager", None)
         if mgr is None:
             await ctx.send("😔 Mommy can’t adjust values right now, sweetie~ Try again later 💕")
             return
 
         user_id = str(member.id)
-
-        old_value = mgr.get_member_value(user_id)   # sync
+        old_value = mgr.get_member_value(user_id)
         new_value = old_value + amount
 
-        await mgr.set_member_value(user_id, new_value)  # async
-        # -------------------------------
-        
-        # Create embed
+        await mgr.set_member_value(user_id, new_value)
+        # ------------------------------------------
+
+        # Build response embed
         embed = discord.Embed(
             color=discord.Color.gold() if amount > 0 else discord.Color.purple()
         )
-        
+
         if member.avatar:
             embed.set_thumbnail(url=member.avatar.url)
-            
-        # Generate messages
+
+        # Titles & descriptions
         if amount > 0:
             titles = [
                 f"✨ Value Boost for {member.display_name}! ✨",
                 f"💰 {member.display_name}'s Value Increased! 💰",
-                f"🌟 Rising Star: {member.display_name}! 🌟",
-                f"💎 Value Investment in {member.display_name}! 💎",
-                f"📈 {member.display_name}'s Stocks Going Up! 📈"
+                f"🌟 Rising Star: {member.display_name}! 🌟"
             ]
-            
             descriptions = [
-                f"Mommy has generously added **{amount}** to {member.mention}'s value! 💖",
-                f"Oooh, {member.mention} gets a nice boost of **{amount}**! 💕",
-                f"Mommy thinks {member.mention} deserves **{amount}** more! 💖",
-                f"{member.mention}'s value just went up by **{amount}**! 💋",
-                f"Mommy is so impressed with {member.mention} that she's adding **{amount}** more! 💓",
-                f"Such a good performance from {member.mention}! **+{amount}** added~ ✨",
-                f"Mommy loves to reward her good babies! **+{amount}** for {member.mention}~ 💝",
-                f"{member.mention} rises in Mommy's eyes! **+{amount}**~ 🎀"
+                f"Mommy added **{amount}** to {member.mention}'s value~ 💖",
+                f"{member.mention} gets **+{amount}**! Mommy is proud~ 💕",
+                f"{member.mention} earned **+{amount}** more value! 💋"
             ]
         else:
             titles = [
                 f"📉 Value Adjustment for {member.display_name} 📉",
-                f"💸 {member.display_name}'s Value Decreased 💸",
-                f"⚠️ Value Correction: {member.display_name} ⚠️",
-                f"🔻 {member.display_name}'s Performance Review 🔻",
-                f"📊 Value Reassessment: {member.display_name} 📊"
+                f"💸 {member.display_name}'s Value Decreased 💸"
             ]
-            
             descriptions = [
-                f"Oh dear, Mommy had to subtract **{abs(amount)}** from {member.mention}'s value. 💔",
-                f"{member.mention} has been a bit naughty, **-{abs(amount)}**! 😈",
-                f"Mommy is disappointed… **-{abs(amount)}** from {member.mention}. 💔",
-                f"{member.mention} needs to work harder! **-{abs(amount)}** 📉",
-                f"Mommy doesn't like to punish, but **-{abs(amount)}**~ 💋",
-                f"Not your best, {member.mention}. **-{abs(amount)}** 🎀",
-                f"You disappointed Mommy a little… **-{abs(amount)}**~ 💭",
-                f"Mommy expects more! **-{abs(amount)}** 🔻"
+                f"Mommy had to subtract **{abs(amount)}** from {member.mention}'s value~ 💔",
+                f"{member.mention} loses **{abs(amount)}** value… do better sweetie~ 😈"
             ]
-            
-        # Apply text
+
         embed.title = random.choice(titles)
         embed.description = random.choice(descriptions)
-        
+
         embed.add_field(name="Previous Value", value=f"{old_value} million", inline=True)
         embed.add_field(name="New Value", value=f"{new_value} million", inline=True)
         embed.add_field(name="Change", value=f"{amount:+} million", inline=True)
-        
+
         embed.set_footer(text=f"Adjusted by {ctx.author.display_name} • {datetime.now().strftime('%Y-%m-%d')}")
-        
+
         await ctx.send(embed=embed)
-            
+
         logging.info(f"Addvalue executed by {ctx.author} for {member} → {old_value} → {new_value}")
-        
+
     except Exception as e:
         error_msg = f"Error in addvalue command: {e}"
         logging.error(error_msg)
@@ -2607,6 +2586,7 @@ async def addvalue_command(ctx, *, args=""):
             await ctx.send(f"{random.choice(MOMMY_ERROR_VARIANTS)}\n\n*Error: {str(e)}*")
         except:
             pass
+
 
 @bot.command(name="addgold")
 async def addgold_command(ctx, *, args=""):
